@@ -24,7 +24,7 @@ Enables to present, update &amp; query tables on the dashboard UI, using the pop
     <dt>Name, Group, Size <span class="property-type">various</span></dt>
     <dd>Standard properties as in all dashboard 2.0 nodes</dd>
     <dt class="optional">Initial Table Configuration <span class="property-type">JSON</span></dt>
-    <dd>Table/column definitions and (optional) initial data, as described in <a href="https://www.tabulator.info/docs/6.2/quickstart#setup">Tabulator Setup</a>. For example:
+    <dd>Table/column definitions and (optional) initial data, as described in <a href="https://www.tabulator.info/docs/6.3/quickstart#setup">Tabulator Setup</a>. For example:
 	<pre><code>{
    "height": 200,
    "layout": "fitColumns",
@@ -87,7 +87,7 @@ msg.tbArgs = [
     <dd>Sets the maximum visible width of the table (in addition to max height which is part of the table configuration object). If the table width or height exceeds the visible area, scrolling bars will appear. The width should be provided in CSS style format, e.g. <code>500px</code> (pixels), <code>100em</code> (font-size), etc.</dd>
 
     <dt class="optional">Notifications <span class="property-type">string</span></dt>
-    <dd>Comma-separated string of selected table events, (see <a href="https://www.tabulator.info/docs/6.2/events">Table Events</a>) which will trigger notifications. For example: <pre><code>cellEdited,rowDblClick</code></pre> The list of supported events is provided in the <i><b>Table Notifications</b></i> section.</dd>
+    <dd>Comma-separated string of selected table events, (see <a href="https://www.tabulator.info/docs/6.3/events">Table Events</a>) which will trigger notifications. For example: <pre><code>cellEdited,rowDblClick</code></pre> The list of supported events is provided in the <i><b>Table Notifications</b></i> section.</dd>
     
 	<dt>Multi-user mode <span class="property-type">checkbox</span></dt>
     <dd><p>By default (unchecked), the node runs in <i><b>Shared</b></i> mode, where all table instances across concurrent dashboard clients are kept in sync and show the same table image (data &amp; styling). In addition, the table image is automatically cached in the Node-RED datastore and reloads upon browser open/refresh.</p>
@@ -102,7 +102,7 @@ msg.tbArgs = [
     <dd>When checked, data updates are being validated, to ensure there are no missing, invalid or duplicate row Ids. When the table holds a very big amount of data, this validation may somewhat slow down the data update.</dd>
 
     <dt class="optional">Theme File<span class="property-type">URL/String</span></dt>
-    <dd><p>Name or URL of an optional theme file, overriding the default table stylesheet with a selected <a href="https://tabulator.info/docs/6.2/theme">Tabulator Theme</a>. The file can be selected from a list of predefined Tabulator themes (CSS stylesheets), using the prefix <code><b>@CSS:</b></code>, for example:
+    <dd><p>Name or URL of an optional theme file, overriding the default table stylesheet with a selected <a href="https://tabulator.info/docs/6.3/theme">Tabulator Theme</a>. The file can be selected from a list of predefined Tabulator themes (CSS stylesheets), using the prefix <code><b>@CSS:</b></code>, for example:
 	<pre><code>@CSS:tabulator_midnight.min.css</code></pre>
 	or from a URL (accessible from the server), using the prefix <code><b>@URL:</b></code>, for example:
 	<pre><code>@URL:https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator_midnight.min.css</code></pre>
@@ -138,7 +138,10 @@ msg.tbArgs = [
 
 <li><p>The datastore which caches the table image, is cleared upon Node-RED server restart, so persisting the table data is under the flow developer's responsibility</p></li>
 
-<li>Tabulator tables can hold huge amounts of Data. Still, attempting to load a big amount of data (tens of thousands of rows) at once in a single message, may hit NodeJS resource limits and/or incur lengthy processing which may cause the client to hang, crash or disconnect. For such cases, it is recommended to load the data in chunks, or use Tabulator in <b><i>Import</i></b> mode, which is more scalable.</li>
+<li>When working with big data sets, it is required to increase the max output message size, which is 1MB by default. It can be set in <b>settings.js</b> as follows::
+<pre><code>dashboard: {
+   maxHttpBufferSize: 1e8 // size in bytes, example: 100 MB
+}</code></pre></li>
 </ul>
 
 <h3>Commands</h3>
@@ -299,8 +302,7 @@ For example:
 <p><i><b>Supported Events</b></i>
 <ul>
 <li><b>Table Creation</b><pre><code>tableBuilt, tableDestroyed</code></pre></li>
-<li><b>Row Interaction</b><pre><code>rowClick, rowDblClick, rowTap, rowDblTap, rowTapHold, rowSelected, rowDeselected</code></pre></li>
-<li><b>Cell Interaction</b><pre><code>cellClick, cellDblClick, cellTap, cellDblTap, cellTapHold</code></pre></li>
+<li><b>UI Interaction</b><pre><code>rowClick, rowDblClick, rowTap, rowDblTap, rowTapHold, rowSelected, rowDeselected, rowMoving, rowMoved, rowMoveCancelled, columnMoved, cellClick, cellDblClick, cellTap, cellDblTap, cellTapHold</code></pre></li>
 <li><b>Cell Change (by user in-cell editing) </b><pre><code>cellEdited</code></pre></li>
 <li><b>Data Change</b><pre><code>rowAdded, rowUpdated, rowDeleted, dataChanged</code></pre></li>
 </ul>
@@ -346,6 +348,10 @@ This enables to send user-specific messages to the <b>ui-tabulator</b> widget (e
 
 <li><p><code>tbTestConnection</code>: tests the socket listeners between the Node-RED server and dashboard clients.<br>
 	Arguments: <code>msg.listener</code> - can be either <code>tbSendMessage</code> or <code>tbClientCommands</code><br></p></li>
+	
+<li><p><code>tbGetClientCount</code>: returns the nuber of connected dashboard clients.<br>
+	Arguments: None<br>
+	<u><b>Note</b></u>: the returned number is of all connected clients, regardless if they include <code>ui-tabulator</code> widgets or not</p></li>
 </ul>
 </ul>
 </script>

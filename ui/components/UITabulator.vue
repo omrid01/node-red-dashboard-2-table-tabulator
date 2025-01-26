@@ -145,11 +145,11 @@ export default {
     methods: {
         //  widget-action just sends a msg to Node-RED, it does not store the msg state server-side
         //  alternatively, you can use widget-change, which will also store the msg in the Node's datastore
+		sendNotification(msg) {
+			this.$socket.emit('widget-action', this.id, msg) // Using the "standard" send for notifications
+        },
 		send(msg) {
-			// this.$socket.emit('widget-action', this.id, msg)
-			
-			// Instead of emitting to 'widget-action', we send the message as a custom event to the server, allowing the server to filter duplicate messages
-			//(from concurrent clients, in shared mode)
+			// Instead of emitting to 'widget-action', we send the message as a custom event to the server, allowing the server to de-duplicate responses from concurrent clients (in shared mode)
 			if (!msg.tbDoNotReply)
 				this.$socket.emit('tbSendMessage'/*+this.id*/, this.id, msg)
         },
@@ -197,6 +197,13 @@ function acceptMsg(msg,$widgetScope)
 	 // Special utility msg for testing client/server connections. bypasses all scope constraints
 	if (msg.tbCmd === "tbTestConnection")
 		return true;
+
+	// Ignore commands which are meant for the server-side node only.
+	switch (msg.tbCmd)
+	{
+		case "tbGetClientCount":
+			return false;
+	}
 
 	let msgClientId = msg?._client?.socketId || "";  // get client Id
 
@@ -631,11 +638,11 @@ return new Promise((resolve, reject) => {
 			// Set notifications for the selected events 
 			setEventNotifications($widgetScope);
 
-			if ($widgetScope.props.events.includes("tableBuilt"))	// if this is explicitely specified in the notification list, send the notification from here
+			if ($widgetScope.props.events.includes("tableBuilt"))	// if 'tableBuilt' is explicitely specified in the notification list, send the notification from here
 			{
-				let eventMsg = new tbEventMsg("tableBuilt",$widgetScope.$socket.id);
+				let eventMsg = new tbEventMsg("tableBuilt");
 				eventMsg.payload = "Table built and ready";
-				$widgetScope.send(eventMsg);
+				$widgetScope.sendNotification(eventMsg);
 			}
 
 			$widgetScope.tblReady = true;
@@ -1174,15 +1181,27 @@ function setEventNotifications($widgetScope)
 				break;
 			case "tableDestroyed":  // Sent *after* table is destroyed
 				$widgetScope.tbl.on(ev, function(){
-					let eventMsg = new tbEventMsg(ev,$widgetScope.$socket.id);
-					$widgetScope.send(eventMsg);
+					let eventMsg = new tbEventMsg(ev);
+					$widgetScope.sendNotification(eventMsg);
 				});
 				break;
 			case "dataChanged":
 				$widgetScope.tbl.on(ev, function(data){
-					let eventMsg = new tbEventMsg(ev,$widgetScope.$socket.id);
+					let eventMsg = new tbEventMsg(ev);
 					eventMsg.payload = data;
-					$widgetScope.send(eventMsg);
+					$widgetScope.sendNotification(eventMsg);
+				});
+				break;
+			case "columnMoved":
+				$widgetScope.tbl.on(ev, function(column,colArr){
+					let eventMsg = new tbEventMsg(ev);
+					const fields = [];
+					colArr.forEach((element) => fields.push(element.getField()));
+					eventMsg.payload = {
+						movedColumn: column.getField(),
+						newColumnOrder:fields
+					};
+					$widgetScope.sendNotification(eventMsg);
 				});
 				break;
 /*
@@ -1192,9 +1211,9 @@ function setEventNotifications($widgetScope)
 					for (let i = 0 ; i < rows.length ; i++)
 						filteredData[i] = rows[i].getData();
 
-					let eventMsg = new tbEventMsg(ev,$widgetScope.$socket.id);
+					let eventMsg = new tbEventMsg(ev);
 					eventMsg.payload = { filteredData: filteredData };
-					$widgetScope.send(eventMsg);
+					$widgetScope.sendNotification(eventMsg);
 				});
 				break;
 */				
@@ -1207,8 +1226,8 @@ function setEventNotifications($widgetScope)
 			case "rowDblTap":
 			case "rowTapHold":
 				$widgetScope.tbl.on(ev, function(evObj,row){	// row = row component
-					let eventMsg = rowEventMsg(row,ev,$widgetScope.$socket.id);
-					$widgetScope.send(eventMsg);
+					let eventMsg = rowEventMsg(row,ev);
+					$widgetScope.sendNotification(eventMsg);
 				});
 				break;
 			case "rowAdded":  	// sent upon addRow, updateOrAddRow, addData or updateOrAddData
@@ -1216,9 +1235,12 @@ function setEventNotifications($widgetScope)
 			case "rowDeleted": // sent upon DeleteRow
 			case "rowSelected": // sent upon manual or programmatic row selection
 			case "rowDeselected": // sent upon manual or programmatic row deselection
+			case "rowMoving": // event is triggered when a row has started to be dragged
+			case "rowMoved": // event is triggered when a row has been successfully moved
+			case "rowMoveCancelled": // event is triggered when a row has been moved but has not changed position in the table
 				$widgetScope.tbl.on(ev, function(row){	// row = row component
-					let eventMsg = rowEventMsg(row,ev,$widgetScope.$socket.id);
-					$widgetScope.send(eventMsg);
+					let eventMsg = rowEventMsg(row,ev);
+					$widgetScope.sendNotification(eventMsg);
 				});
 				break;
 		//-------------------------------------------------------
@@ -1227,7 +1249,7 @@ function setEventNotifications($widgetScope)
 			case "cellEdited":
 				$widgetScope.tbl.on(ev, function(cell)	{  // cell = cell component
 
-					let eventMsg = new tbEventMsg(ev,$widgetScope.$socket.id);
+					let eventMsg = new tbEventMsg(ev);
 					
 					let row = cell.getRow();
 					let col = cell.getColumn();
@@ -1236,7 +1258,7 @@ function setEventNotifications($widgetScope)
 					let field = col.getField();
 					let value = cell.getValue();
 					
-					if ($widgetScope.props.events.includes("cellEdited"))	// Event is registered in notifications
+					if ($widgetScope.props.events.includes("cellEdited"))	// Event is registered for notifications
 					{
 						eventMsg.payload =   {
 							[rowIdField]: rowId,
@@ -1244,16 +1266,17 @@ function setEventNotifications($widgetScope)
 							newValue: value,
 							oldValue: cell.getOldValue()
 						}
-						$widgetScope.send(eventMsg);
+						$widgetScope.sendNotification(eventMsg);
 					}
 					// if not multi-user, send client sync notification
 					if (!$widgetScope.props.multiUser)
 					{
 						eventMsg.tbCmd = 'tbCellEditSync';
+						eventMsg._client = {socketId:$widgetScope.$socket.id};
 						eventMsg.payload = {
 							[rowIdField]: rowId,
 							field: field,
-							value: value,
+							value: value
 						}
 						//piggyback the DS image on the event, to allow server node to update the datastore
 						eventMsg.dsImage = {
@@ -1274,8 +1297,8 @@ function setEventNotifications($widgetScope)
 			case "cellDblTap":
 			case "cellTapHold":
 				$widgetScope.tbl.on(ev, function(e,cell){	// e = mouse event, cell = cell component
-					let eventMsg = cellEventMsg(cell,ev,$widgetScope.$socket.id);
-					$widgetScope.send(eventMsg);
+					let eventMsg = cellEventMsg(cell,ev);
+					$widgetScope.sendNotification(eventMsg);
 				});
 				break;
 			default:
@@ -1285,18 +1308,18 @@ function setEventNotifications($widgetScope)
 		debugLog($widgetScope.id+": Set '"+ev+"' notifications");
 	}
 }
-function rowEventMsg(row,ev,sockId)
+function rowEventMsg(row,ev)
 {
-	let evMsg = new tbEventMsg(ev,sockId);
+	let evMsg = new tbEventMsg(ev);
 	evMsg.payload = {
 		rowIndex: row.getIndex(),
 		rowData:  row.getData()
 	}
 	return	evMsg;
 }
-function cellEventMsg(cell,ev,sockId)
+function cellEventMsg(cell,ev)
 {
-	let evMsg = new tbEventMsg(ev,sockId);
+	let evMsg = new tbEventMsg(ev);
 	evMsg.payload = {
 		row:   cell.getRow().getIndex(),
 		field: cell.getField(),
@@ -1343,14 +1366,12 @@ function tbStyleMapRow(rowId)
 	this.rowStyles = null;
 	this.cells 	   = {};
 }
-function tbEventMsg(ev,sockId)
+function tbEventMsg(ev)
 {
 	this.topic = "tbNotification";
 	this.event = ev;
 	this.payload = {};
 	this.notificationId = createUniqueId();
-	if (sockId)
-		this._client = {socketId:sockId};
 }
 // *********  Utility functions  ****************************************************************
 function checkInputRowIds(rows,idField)

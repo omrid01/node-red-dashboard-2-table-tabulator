@@ -78,5 +78,5 @@ Upon server restart, deploy and reconnect, sometimes the client's socket listene
 #### Node Dependencies
 * Node-JS version >= 18
 * Node-red version >= 3.10
-* Node-red dashboard 2.0, version >= 1.17.1
-* Tabulator version >= 6.2 (comes bundled in the node installation)
+* Node-red dashboard 2.0, version >= 1.22.0
+* Tabulator version >= 6.3 (comes bundled in the node installation)

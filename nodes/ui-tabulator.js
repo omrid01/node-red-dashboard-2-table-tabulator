@@ -34,12 +34,21 @@ module.exports = function (RED) {
 
 				// check if there are connected clients
 				const conns = base.uiShared?.connections;
-				if (!conns || Object.keys(conns).length === 0)
+				const connCount = typeof conns === "object" && conns != null ? Object.keys(conns).length : 0;
+				if (msg.tbCmd === "tbGetClientCount")
+				{
+					msg.payload = connCount;
+					node.send(msg);
+				}
+				else if (connCount === 0)
 				{
 					const errMsg = "No connected clients - message to ui-tabulator ignored";
-					console.warn(errMsg);
-					msg.error = errMsg;
-					node.send(msg);
+					debugLog(errMsg);
+					if (!msg.tbDoNotReply)
+					{
+						msg.error = errMsg;
+						node.send(msg);
+					}
 				}
 
                 // forward it as-is to any connected nodes in Node-RED  - ** deprecated  feature **
@@ -47,10 +56,11 @@ module.exports = function (RED) {
 				//	send(msg);
             },
 
-            onSocket: {					// Function arguments: conn = socketId, id = node.id
+            onSocket: {	// Function arguments: conn = socketId, id = node.id
 				//-------------------------------------------------------------------------------------------------
 				//'widget-action': function  (conn, id, msg) {
-				//	console.log("'widget action' msg:",msg)
+				//	if (id === node.id && msg.topic === "tbNotification")
+				//		console.log("'widget action' msg:",msg)
                 //},
 
 				// *******************************************************************************************************************************
@@ -58,19 +68,10 @@ module.exports = function (RED) {
 				// *******************************************************************************************************************************
                 
 				//['tbSendMessage'+node.id]: function (conn, id, msg) { // listener per ui-tabulator node instance
-                'tbSendMessage': function (conn, id, msg) {	            // single listener for all ui-tabulator nodes (less impact on socket) 
-					if (id !== node.id)
+                'tbSendMessage': function (conn, id, msg) {
+					if (id !== node.id) // single listener for all ui-tabulator nodes (less impact on socket)
 						return;
-					
-					// Table notifications
-					//--------------------
-					if (msg.topic === "tbNotification")
-					{
-						//console.log("table notification",msg)
-						node.send(msg);  // Send all notifications - cannot de-duplicate across clients since no common incoming msg id
-						return;
-					}
-					
+										
 					// Reponses to commands
 					//---------------------
 					switch (msg.tbCmd)
