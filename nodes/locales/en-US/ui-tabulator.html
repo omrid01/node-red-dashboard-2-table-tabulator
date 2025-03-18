@@ -41,12 +41,13 @@ Enables to present, update &amp; query tables on the dashboard UI, using the pop
 	<p>If left empty, the node will load without creating a table (the table can be created later in runtime using the <code>tbCreateTable</code> command).</p></dd>
 
     <dt class="optional">Custom Functions <span class="property-type">text</span></dt>
-    <dd>Optional: custom expressions to be set inside Tabulator APIs (for conditional formatting, sorting, filtering, grouping etc.). Each function should be in the format <code>function <i>funcName</i>(<i>param1,param2,...</i>){<i>function body</i>}</code>. For example:
+    <dd>Optional: custom expressions to be set in the table configuration (for conditional formatting, sorting, filtering, grouping etc.). Each function should be in the format <code>function <i>funcName</i>(<i>param1,param2,...</i>){<i>function body</i>}</code>. For example:
 	<pre><code>function AddCelsius (cell) {return cell.getValue() + (cell.getValue()!=='' ? '°C' : '')}
 function func2 (...) {...}
 // etc.</code></pre>
+	The function definitions should match the exact respective prototype expected by Tabulator, and their names are case-sensitive.
+	<br>When specifying a function in the table configuration, it should be prefixed by the special token <code><b>@F:</b></code>. Following is an example of setting a conditional formatter in a column:
 
-	The functions definition should follow the prototype expected by their respective Tabulator API, and their names are case-sensitive. To specify a function in the table configuration, it should be prefixed by the special token <code><b>@F:</b></code>.Following is an example of setting a conditional formatter in a column:
 	<p><br>Function definition in <b><i>Custom Functions</i></b>:
 	<pre><code>function ageColor (cell,params) {
    if (cell.getValue() &LT; params.minAge)
@@ -55,11 +56,9 @@ function func2 (...) {...}
 }</code></pre>
 
 	Reference to the function in the <b>Table configuration</b>:<pre><code>"columns": [
-      {"title":"Age", "field":"age", "formatter":"<span style='color:#8B0000'>@F:ageColor</span>",
-         "formatterParams":{"minAge": 18}
-      },
+      {"title":"Age", "field":"age", "formatter":"@F:ageColor", "formatterParams":{"minAge": 18}},
 ]</code></pre></p>
-	<p>In the same manner, functions can also be specified in (relevant) <b>Table command</b> arguments. For example:
+	<p>In the same manner, functions can also be specified in (some) <b>Table commands</b>. For example:
 	<pre><code>msg.tbCmd = "setSort";
 msg.tbArgs = [
    "@F:mySortFunction",
@@ -67,6 +66,8 @@ msg.tbArgs = [
 
 	<p><b><u>Notes</u></b>:
 	<ul>
+	<li>Custom functions are currently supported only for table configuration and appearance commands (group-by, filter, sort etc.). They cannot be set within the table data
+	(e.g. <code>{ "id": 2, "price": @F:calcPrice }</code> <b>WILL BE IGNORED</b>.</li>
 	<li>The keyword <code>function</code> is reserved for declaring the function. Do not specify it anywhere else in the function body, not even in a comment</li>
 	<li>The same function can be reused in multiple places</li>
 	<li>It is also possible to define unnamed (inline) functions directly inside table arguments, in the format <code>@F:(<i>param1,param2,...</i>)=>{<i>function body</i>}</code>. For example:
@@ -101,16 +102,14 @@ msg.tbArgs = [
     <dt>Validate Row-Id Uniqueness <span class="property-type">checkbox</span></dt>
     <dd>When checked, data updates are being validated, to ensure there are no missing, invalid or duplicate row Ids. When the table holds a very big amount of data, this validation may somewhat slow down the data update.</dd>
 
-    <dt class="optional">Theme File<span class="property-type">URL/String</span></dt>
-    <dd><p>Name or URL of an optional theme file, overriding the default table stylesheet with a selected <a href="https://tabulator.info/docs/6.3/theme">Tabulator Theme</a>. The file can be selected from a list of predefined Tabulator themes (CSS stylesheets), using the prefix <code><b>@CSS:</b></code>, for example:
+    <dt class="optional">Theme File<span class="property-type">string</span></dt>
+    <dd><p>Optional: name of a theme (CSS stylesheet) file, overriding the default table stylesheet.<br>
+	The file can be selected from the list of predefined <a href="https://tabulator.info/docs/6.3/theme">Tabulator Themes</a>, using the prefix <code><b>@CSS:</b></code>, for example:
 	<pre><code>@CSS:tabulator_midnight.min.css</code></pre>
-	or from a URL (accessible from the server), using the prefix <code><b>@URL:</b></code>, for example:
-	<pre><code>@URL:https://unpkg.com/tabulator-tables@6.3.0/dist/css/tabulator_midnight.min.css</code></pre>
-	If not prefixed by either of the above, it is assumed as the full file name (including path) on the <b>server</b> file system. For example:
-	<pre><code>C:/My_Project/CSS_Files/tabulator_midnight.min.css</code></pre>
+	If not prefixed by <code><b>@CSS:</b></code>, it is assumed to be a full file name (including path) on the <b>server</b> file system.
 
-	<p><u><b>Note</b></u>: currently, the theme selection is at page level, i.e. applies to all table nodes that are on the same page.</p>
-	<p>See additional ways of styling, in the <b><i>CSS Styling</i></b> section below.</p>
+	<p><u><b>Note</b></u>: the theme selection applies at page level, i.e. applies to all table nodes that are on the same page.</p>
+	<p>See additional ways of styling, in the <b><i>Table Styling</i></b> section below.</p>
 	</dd>
 
     <dt class="optional">DIV Override <span class="property-type">String</span></dt>
@@ -134,18 +133,25 @@ msg.tbArgs = [
 <ul>
 <li><p>Tabulator requires each table row to have a unique idetifier. Typically it is the field <code>id</code>, but can be another field, specified by the <code>index</code> property of the table configuration.</p></li>
 
-<li><p>Messages sent to the node always return unchanged (except for <code>payload</code> and potentially <code>error</code>). If the user does not want to get a reply to a message, he can flag that message with <code>msg.tbDoNotReply = true</code>.</p></li>
+<li><p>Messages sent to the node return unchanged (except for <code>payload</code> and potentially <code>error</code>). If the user does not want to get a reply to a message, he can flag that message with <code>msg.tbDoNotReply = true</code>.</p></li>
 
 <li><p>The datastore which caches the table image, is cleared upon Node-RED server restart, so persisting the table data is under the flow developer's responsibility</p></li>
 
-<li>When working with big data sets, it is required to increase the max output message size, which is 1MB by default. It can be set in <b>settings.js</b> as follows::
+<li>When working with big data sets (in <i><b>Shared</b></i> mode), it is recommended to query the datastore directly (with commands such as <code>tbGetDsData</code> (described later) to avoid performance impact.
+If you use the regular Tabulator commands (e.g. <code>getData</code>) you might need to increase the max dashboard output message size, which is 1MB by default. It can be set in <b>settings.js</b> as follows:
 <pre><code>dashboard: {
    maxHttpBufferSize: 1e8 // size in bytes, example: 100 MB
 }</code></pre></li>
 </ul>
 
 <h3>Commands</h3>
-<p>The commands are divided into <i><b>Tabulator commands</b></i> (directly mapped to Tabulator APIs), and <i><b>Node commands</b></i> (handled internally in the node, or apply additional processing/parsing to the Tabulator API calls).</p>
+<p>The commands sent <code>ui-tabulator</code> are divided into 3 types:
+<ul>
+ <li><b>Tabulator API commands</b> - directly mapped to Tabulator APIs</li>
+ <li><b>Widget commands</b> - handled within in the dashboard widget, and apply additional processing/parsing around the Tabulator API calls</li>
+ <li><b>Node (server) commands</b> - handled the by node (as part of the flow) and not sent to the dashboard, thus do not require any dashboard clients to be open.
+  Applicable in <i><b>Shared</b></i> mode only. </li></p>
+</ul>
 
 <p><b><i>Summary of Tabulator API Commands</i></b>
 <ul>
@@ -155,12 +161,16 @@ msg.tbArgs = [
 <li><b>Table Appearance</b><pre><code>showColumn, hideColumn, setSort, setFilter, getFilters, addFilter, removeFilter, clearFilter</code></pre></li>
 <li><b>Misc.</b><pre><code>download</code></pre></li>
 </ul></p>
-<p><b><i>Summary of Node Commands</i></b>
+<p><b><i>Summary of Widget Commands</i></b>
 <ul>
 <li><b>Table Instantiation</b><pre><code>tbCreateTable, tbDestroyTable, tbResetTable</code></pre></li>
 <li><b>Table Appearance</b><pre><code>tbSetStyles, tbClearStyles, tbSetGroupBy</code></pre></li>
 </ul></p>
-<p>There are also several testing & utility commands, listed in the <b><i>Testing and Debugging</i></b> section.</p>
+<p><b><i>Summary of Node (Server) Commands</i></b>
+<ul>
+<li><b>Datastore Query</b><pre><code>tbGetDsData, tbGetDsDataCount</code></pre></li>
+</ul></p>
+<p>There are also additional testing & utility commands, listed in the <b><i>Testing and Debugging</i></b> section.</p>
 
 <p>The Tabulator API commands use the exact (<b>case sensitive</b>) input/output arguments as defined in the Tabulator documentation. The input arguments should be provided as an array within the property <code>msg.tbArgs</code>. If the API requires no arguments, the <code>tbArgs</code> property can be an empty array (<code>[]</code>) or excluded altogether from the message.</li>
 Examples:
@@ -185,7 +195,7 @@ msg.tbArgs = [
       {id:1, name:"bob"}
    ]
 ];</code></pre></li>
-<li>For any Tabulator API which expects 'function' arguments, You can specify <b><i>Expressions</i></b> (via their prefixed name), taken from the table's <b><i>Custom Expressions</i></b> list. For example:
+<li>For Tabulator APIs which accept 'function' arguments, You can provide a reference to the table's <b><i>Custom Functions</i></b> list, using the <code>@F:</code> prefix. For example:
 <pre><code>tbCmd  = setFilter;
 tbArgs = [
     @F:myFilterFunction,
@@ -196,8 +206,8 @@ tbArgs = [
 </ul>
 </p>
 
-<p><i><b>Node Commands</b></i></p>
-<p>The Node commands are prefixed with <b>"tb"</b>, and are not included in the Tabulator documentation. They typically have their own command-specific arguments, as described below:</p>
+<p><i><b>Widget Commands</b></i></p>
+<p>The widget commands are prefixed with <b>"tb"</b>, and are not included in the Tabulator documentation. They typically have their own command-specific arguments, as described below:</p>
 <ul>
 <li><code>tbCreateTable</code><br>
 	<p>Creates a new table, after destroying the previous table (if existed).</p>
@@ -206,7 +216,7 @@ tbArgs = [
 	<li><code>tbInitObj</code><br>
 	Table configuration object, with the same structure as the node's <code>Initial Table Configuration</code> (described in <a href="https://www.tabulator.info/docs/6.3/quickstart#setup">Tabulator Setup</a>).</li>
 	<li><code>tbFuncs</code><br>
-	Optional string with definition of <code>Custom Functions</code>, same as in the node's table configuration</li>
+	Optional string with definition of <code>Custom Functions</code>, same as in the node's table configuration. If not provided, the node will use the functions defined in the node configuration.</li>
 	</ul></p>
 	<p>Returns a success string in <code>payload</code> once table is created and ready, or an <code>error</code> property upon failure.</p>
 	<p><u><b>Note</b></u>: when creating a table with <code>tbCreateTable</code> (in <i><b>Shared</b></i> mode), the new table configuration is cached in the datastore, and overrides the node's initial table configuration & custom functions (until next Node-RED restart).</p>
@@ -230,9 +240,10 @@ tbArgs = [
 	<ul>
 	<li><code>tbScope</code><br>
 	An object with 2 optional fields: <code>rowId</code> and <code>field</code>.<br>
-	<code>rowId</code> indicates the row index (the value of <code>id</code>, or a row index field specified by <code>index</code> in the table configuration). <code>rowId</code>  with the reserved value <i><b>'tbHeader'</b></i> indicates the header row. <code>field</code> indicates the column name. The scope is derived as follows:
+	<code>rowId</code> indicates the row index (the value of <code>id</code>, or a row index field specified by <code>index</code> in the table configuration). <code>rowId</code>  with the reserved value <code>tbHeader</code> indicates the header row. <code>field</code> indicates the column name. The scope is derived as follows:
 	<pre><code>msg.tbScope = {rowId:2,field:"name"};         // affects the cell in row 2, column "name"
 msg.tbScope = {rowId:2};                      // affects all row 2
+msg.tbScope = {field:"name"};                 // affects the whole column "name"
 msg.tbScope = {rowId:"tbHeader",field:"name"};// affects the header of column "name"
 msg.tbScope = {rowId:"tbHeader"};             // affects all the headers
 msg.tbScope = {};                             // affects the whole table</code></pre>
@@ -247,21 +258,19 @@ msg.tbScope = {};                             // affects the whole table</code><
 	</ul>
 	Returns an <code>error</code> property upon failure.
 </li>
-<br>
 <li><code>tbClearStyles</code><br>
 	Discards all the dynamic styling which were applied by <code>tbSetStyle</code>.<br>
 	Arguments: none<br>
 </li>
-<br>
 <li><code>tbSetGroupBy</code><br>
 	Enables grouping the table by one or more fields.<br>
 	Arguments:
 	<ul>
 		<li><code>tbFields</code><br>
-		A field name, or array of field names, by which to group the table. Omitting this argument or providing an empty string will clear the current grouping<br></li>
+		A field name, or array of field names, for grouping the table. Omitting this argument or providing an empty string will clear the current grouping. The field name(s) can also be functions.<br></li>
 
 		<li><code>tbGroupHeader</code><br>
-		Header-formatting function (or array of functions), which can be either:
+		Optional header-formatting expression (or array of expressions), which can be either:
 		<ul>
 		<li>Reference to a function from the node's <b>Custom Functions</b> list (prefixed by <code>@F:</code>)</li>
 		<li>Unnamed inline function (prefixed by <code>@F:</code>)</li>
@@ -271,14 +280,26 @@ msg.tbScope = {};                             // affects the whole table</code><
 			<li><code>$value</code> - the grouping value of the current group</li>
 			<li><code>$count</code> - the number of rows in the group</li>
 			</ul>
+		</ul></li>
+		</li>
 		<p>For example:
 		<pre><code>msg.tbFields = "name"
 msg.tbGroupHeader = "$field=$value, ($count items)"</code></pre>
 		The group header will then look like: <b>name=John, (5 items)</b></p>
 		<p>The formatting string can be further customized by CSS styling. For example:
-		<pre><code>msg.tbGroupHeader="$field=&LT;span style="color:red"&GT;$value&LT;/span&GT;, (&LT;b&GT;$count&LT;/b&GT; items)"</code></pre></p></li>
-	</ul>
-</li>
+		<pre><code>msg.tbGroupHeader="$field=&LT;span style="color:red"&GT;$value&LT;/span&GT;, (&LT;b&GT;$count&LT;/b&GT; items)"</code></pre>
+		</p>
+	</ul></li>
+</ul>
+<p><i><b>Node (Server) Commands</b></i></p>
+<p>The node commands are also prefixed with <b>"tb"</b>, and not included in the Tabulator documentation.</p>
+<ul>
+<li><code>tbGetDsData</code><br>
+	<p>Queries the datastore and returns the table data (applicable for <i><b>Shared</b></i> mode only). Useful for tables with large data sets. Output is in same format as in <code>getData</code>.
+	<br>Arguments: none</p></li>
+<li><code>tbGetDsDataCount</code><br>
+	<p>Returns the table's row count from the datastore (Applicable for <i><b>Shared</b></i>mode only).
+	<br>Arguments: none</p></li>
 </ul>
 
 <h3>Table Notifications</h3>
@@ -321,19 +342,39 @@ For example:
 
 This enables to send user-specific messages to the <b>ui-tabulator</b> widget (e.g. sorting, filtering, row selection), without affecting other clients, even in shared mode. To force a client-originated message to go to all clients, either delete the client Id (the property <code>msg._client</code>), or set the property <code>msg.tbClientScope = 'tbAllClients'</code>.</p>
 
-<h3>CSS Styling</h3>
-<p>Setting table styles can be done at different levels:
+<h3>Table Styling</h3>
+<p>Setting table styles can be done in several ways:
 <ol>
-<li><p><b>Theme file</b>: selection of a Tabulator CSS stylesheet in the node configuration, either from the predefined theme files (prefixed by <b><code>@CSS:</code></b>), a URL (prefixed by <b><code>@URL:</code></b>) or external file on the server file system.</li></p>
+<li><p><b>Theme file</b>: specifying a Tabulator CSS stylesheet in the node configuration, from either the predefined theme-file list (prefixed by <b><code>@CSS:</code></b>) or a file on the server file system.</li></p>
 
-	<p><u><b>Note</b></u>: currently, the theme selection is at page level, i.e. applies to all table nodes that are on the same page.</p>
+	<p><u><b>Note</b></u>: the theme selection is page-scoped, i.e. applies to all table nodes which are on the same page.</p>
 
-<li><b>Adding Tabulator CSS classes</b>: overriding Tabulator defaults by adding CSS classes into a related <code>template</code> styling node. For example:<pre><code>.tabulator-table .tabulator-cell {
+<li><b>Page-level CSS</b> - custom CSS classes defined in a related <code>template</code> styling node, which either override the native <a href="https://tabulator.info/docs/6.3/style#css">Tabulator CSS Classes</a>, or use built-in predefined class names:
+<ul>
+	<li><b>ui-tabulator-class</b> - applied to the DIV containing the ui-tabulator widget</li>
+	<li><b>ui-tabulator-wrapper</b> - applied to a wrapper DIV containing the above widget DIV</li>
+</ul>
+These classes are page-scoped, i.e. apply to all ui-tabulator nodes on the page.
+
+<br>For example:<pre><code>.ui-tabulator-class {
+  border: 4px solid red !important;
+}
+.tabulator-table .tabulator-cell { /* applies to all table cells (page-scoped) */
   color: #CC3A82;
   font-weight: bold;
 }</code></pre>
 </li><br>
-<li><b>Runtime (dynamic) styling</b>: using the <code>tbSetStyle</code> command. Note, that this command is not overriding the page-level CSS constraint, hence each table on the page to have its own styling.</li>
+<li><b>Custom CSS in the table configuration</b> - e.g. in column properties such as <code>cssClass</code>, <code>formatter</code> and <code>titleFormatter</code>.
+<br>For example:<pre><code>columns [
+    {"field":"name",...,"cssClas":"myClass1"},
+    {"field":"age",...,"formatter":"@F:setClass2"}
+]</code></pre>
+where the <code>setClass2</code> function is defined as:<pre><code>function setClass2(cell) {
+    cell.getElement().classList.add('myClass2');
+    return cell.getValue();
+}</code></pre>
+These classes are applied per table widget, allowing each table on the page to have its own styles.</li><br>
+<li><b>Runtime (dynamic) styling</b>: using the <code>tbSetStyle</code> command. This is also widget-scoped, and the applied styles are saved in the datastore (when in <i><b>Shared mode</b></i>).</li>
 </ol>
 </p>
 
@@ -343,8 +384,16 @@ This enables to send user-specific messages to the <b>ui-tabulator</b> widget (e
 <li><p>Setting an environment variable <b>TBDEBUG=TRUE</b> in the server (Node-RED) process, will enable verbose console log messages in both server & client.</p></li>
 <li>Available test/debug commands:
 <ul>
-<li><p><code>tbShowDatastore</code>: applicable for <b><i>Shared</i></b> mode only. Shows the table image stored in the Node-RED datastore.<br>
-	Arguments: <code>msg.sendMsg = true</code> - indicates to send the data store image in a message (in addition to printing to the Node-RED console)<br></p></li>
+<li><p><code>tbShowDatastore</code>: retrieves the table image stored in the Node-RED datastore.<br>
+	Arguments:<br>
+	<code>msg.tbOutput</code> - a string with either:
+	<ul>
+	<li> <b>msg</b>  - datastore image will be sent in <code>msg.payload</code></li>
+	<li> <b>log</b> - image will be printed to the Node-RED console</li>
+	</ul>
+	If <code>msg.tbOutput</code> is not specified, the image will be sent to both.
+	<br></li>
+</ul></p>
 
 <li><p><code>tbTestConnection</code>: tests the socket listeners between the Node-RED server and dashboard clients.<br>
 	Arguments: <code>msg.listener</code> - can be either <code>tbSendMessage</code> or <code>tbClientCommands</code><br></p></li>

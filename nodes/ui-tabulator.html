@@ -207,6 +207,7 @@ function expandEditor(e,editor,mode,stateId)
 function parseFuncs(str)
 {
 	// const splitRegex = /function\s+(\w+)\s*\(([^)]*)\)\s*\{([^}]*)\}/msg; --- does not support nested {}
+	const leadingTextRegex = /^[\s\S]*?function/;
 	const splitRegex = /function\s+/g ; //split by the keyword 'function ' (the body must not have a 'function' keyword inside it, even as a comment)
 	const matchRegex = /\s*(\S+)\s*\(([^)]*)\)\s*([^]*)/;
 	
@@ -215,7 +216,9 @@ function parseFuncs(str)
 	const funcParamsRegex = new RegExp(`^${pName}\\s*(,\\s*${pName}\\s*)*$|^\\s*$`); // zero or more params, comma-separated
 	const funcBodyRegex = /^\{[^]*\}$/;  // enclosed in curly brackets. Unable to check JS syntax validity here
 
-//	first, split into separate functions
+	// first, trim all leading text until the first 'function' keyword
+	str = str.replace(leadingTextRegex,"function")
+	// next, split into separate functions
 	let res = "Parsed functions:"+'\n';
 	const rawFuncs = str.split(splitRegex);
 	for (let i = 0 ; i < rawFuncs.length ; i++)

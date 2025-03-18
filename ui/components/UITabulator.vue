@@ -1,14 +1,16 @@
 <template>
-    <!-- Component must be wrapped in a block so props such as className and style can be passed in from parent    -->
-    <div className="ui-tabulator-wrapper">
-		<div ref="tabulatorDiv"></div>
+	<div class="ui-tabulator-wrapper">
+		<div ref="tabulatorDiv" class="ui-tabulator-class"></div>
     </div>
- </template>
-
+</template>
+<style>
+@import  "../../node_modules/tabulator-tables/dist/css/tabulator.min.css"
+</style>
 <script>
 import {TabulatorFull as Tabulator} from 'tabulator-tables';
 import { markRaw } from 'vue'
 import { mapState } from 'vuex'
+import {} from '../../nodes/common.js'
 
 export default {
     name: 'UITabulator',
@@ -36,22 +38,26 @@ export default {
                 { label: 'Text & Typography', url: 'https://vuetifyjs.com/en/styles/text-and-typography/#typography' }
             ],
 			// Table properties
-			tbl: 		 	null,	// reference to table object
+			tbl: 		 	null,	// reference to the table object
 			tblReady:	 	false,	// Indicates that table has completed initializing
-			tblDivId:		"",		// Optional, allow table instantiation on a specified Div
+			tblDivId:		"",		// Optional, allows table instantiation on a specified Div
 			rowIdField:		"id",	// The name of the field which holds the unique row Id (the default is 'id', but can be overridden)
 
-			origTblConfig:	null,	// original table configuration, as configured in the node (converted from JSON to an object). null=no tbl config in node
-			origTblFuncs:	null,	// the custom functions configured in the node (converted from JSON to an object). null=no functions
+			origTblConfig:	null,	// original table configuration, as configured in the node (converted from JSON to an object). null=no table config in the node
+			origTblFuncs:	null,	// Original the custom functions configured in the node (converted from text to an object). null=no functions
 
 			activeTblConfig:null,	// active table configuration (excluding data & funcs). null=no active table
-			activeTblFuncs:	null,	// active funcs (custom formatters). null = none
-			tblStyleMap:	null 	// styles assigned to the active table (via the tbSetStyle command)
+			activeTblFuncs:	null,	// active functions. null = none
+			tblStyleMap:	null, 	// styles assigned to the table (via the tbSetStyle command)
+			tblHeaderRowId:	"tbHeader" // mock rowId value for the header styling
 		}
     },
 // ******************************************************************************************************************************************
     mounted () {
-		const $widgetScope = this; // Save the 'this' scope for socket listener, callbacks, external functions etc.
+	
+		//tbTestImport.sayHello(); // test that 'common.js' was imported successfully
+	
+		const vThis = this; // Save the Vue 'this' scope for socket listener, callbacks, external functions etc.
 		
 		window.tbPrintToLog = this.props.printToLog;
 		debugLog(`***ui-tabulator node ${this.id} mounted on client ${this.$socket.id}, debug=${window.tbPrintToLog?"on":"off"}`);
@@ -63,17 +69,15 @@ export default {
 			let cfg = null;
 			try  {
 				cfg = JSON.parse(cfgStr);
+				if (cfg && Object.keys(cfg).length > 0)
+					this.origTblConfig = cfg;
 			}
 			catch (err) {
 				cfg = null;
 				console.error(this.id+": Invalid table configuration:",err);
 			}
-			if (cfg)
-			{
-				this.origTblConfig = cfg;
-				this.origTblFuncs  = parseFuncSheet(this.props.funcs);
-			}
 		}
+		this.origTblFuncs = tbParseFuncSheet(this.props.funcs);
 		
 		// Load CSS theme
 		if (this.props.themeCSS)
@@ -82,7 +86,7 @@ export default {
 		if (this.props.tblDivId);
 		{
 			this.tblDivId = this.props.tblDivId?.trim() || "";
-//			this.$refs.tabulatorDiv.style.display = "none";  // hide the original DIV
+			// this.$refs.tabulatorDiv.style.display = "none";  // hide the original DIV
 		}
 
 		// Set max table width (else will overflow with no horizontal scroller
@@ -97,22 +101,22 @@ export default {
 		// listener for flow messages on input port
 		// ****************************************************************************************
         this.$socket.on('msg-input:' + this.id, (msg) => {
-			if (!msg || !acceptMsg(msg,$widgetScope))
+			if (!msg || !acceptMsg(msg,vThis))
 				return;
-			processMsg(msg,$widgetScope);
+			processMsg(msg,vThis);
 		});
 		
 		// ****************************************************************************************
-		// Utility listener for custom server node notifications
+		// Utility listener for custom server-node notifications
 		// ****************************************************************************************
 		this.$socket.on('tbServerEvent:' + this.id, (msg) => {
 
-			//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-			// Temp workaround - forcing client reload (due to NR framework bug)
-			//-----------------------------------------------------------------
-			if (msg.tbCmd === "tbReloadClient")
+			//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+			// Temp workaround (due to NR framework bug) - force client to reload every time server-node is restarted
+			//-------------------------------------------------------------------------------------------------------
+			if (msg?.tbCmd === "tbReloadClient")
 			{
-				console.log($widgetScope.id+": Received reload request");
+				console.log(vThis.id+": Received reload request");
 
 				// setTimeout(()=>location.reload(),5000);
 				location.reload();
@@ -120,15 +124,16 @@ export default {
 			}
 			//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-			if (!msg || !acceptMsg(msg,$widgetScope))
+			if (!msg || !acceptMsg(msg,vThis))
 				return;
-			processMsg(msg,$widgetScope);
+			processMsg(msg,vThis);
 		});
 		
 		// ***************************************************************************************************
 		// msg listener for 'widget-load' event, sent from server when widget is loaded (with datastore image)
 		// ***************************************************************************************************
 		this.$socket.on('widget-load:' + this.id, (msg) => {
+			debugLog(vThis.id+" Loaded DS image:",msg);
 			initialTableLoad(msg,this)
         })
     },
@@ -144,66 +149,69 @@ export default {
 // ******************************************************************************************************************************************
     methods: {
         //  widget-action just sends a msg to Node-RED, it does not store the msg state server-side
-        //  alternatively, you can use widget-change, which will also store the msg in the Node's datastore
+        //  alternatively, you can use widget-change, which will also stores the msg in the Node's datastore
 		sendNotification(msg) {
 			this.$socket.emit('widget-action', this.id, msg) // Using the "standard" send for notifications
         },
 		send(msg) {
-			// Instead of emitting to 'widget-action', we send the message as a custom event to the server, allowing the server to de-duplicate responses from concurrent clients (in shared mode)
 			if (!msg.tbDoNotReply)
-				this.$socket.emit('tbSendMessage'/*+this.id*/, this.id, msg)
+			{
+				if (this.props.multiUser)
+					this.$socket.emit('widget-action', this.id, msg) // Use the "standard" send for notifications
+				else
+					this.$socket.emit('tbSendMessage'/*+this.id*/, this.id, msg) // send the message as a custom event, lets the server de-duplicate identical responses from concurrent clients
+
+			}
         },
 		sendClientCommand(cmd,msg) {
             msg.tbClientCmd = cmd;
             this.$socket.emit('tbClientCommands'/*+this.id*/, this.id, msg)
         },
 		saveToDatastore(config,funcs,data,styleMap,clientMsgId)	{
-			let dsMsg = {};
-            dsMsg.tbClientCmd = 'tbSaveToDatastore';
-			dsMsg.clientMsgId = clientMsgId;
-			dsMsg.payload = {
-				timestamp: Date.now(),
+			let dsMsg = {
+				tbClientCmd: 'tbSaveToDatastore',
 				clientMsgId: clientMsgId,
-				config: config,
-				funcs: funcs,
-				data:   data,
-				styleMap: styleMap
-			}
+				payload: {
+					timestamp: Date.now(),
+					clientMsgId: clientMsgId
+				}
+			};
+			if (config !== undefined)
+				dsMsg.payload.config = config;
+			if (funcs !== undefined)
+				dsMsg.payload.funcs = funcs;
+			if (data !== undefined)
+				dsMsg.payload.data = data;
+			if (styleMap !== undefined)
+				dsMsg.payload.styleMap = styleMap;
+
             this.$socket.emit('tbClientCommands'/*+this.id*/, this.id, dsMsg)
  		},
-		clearDatastore(clientMsgId)
-		{
-			let dsMsg = {};
-            dsMsg.tbClientCmd = 'tbClearDatastore';
-			dsMsg.clientMsgId = clientMsgId;
-            this.$socket.emit('tbClientCommands'/*+this.id*/, this.id, dsMsg)
-		},
-		showDatastore(sendMsg,clientMsgId)
-		{
-			let dsMsg = {};
-            dsMsg.tbClientCmd = 'tbShowDatastore';
-			dsMsg.clientMsgId = clientMsgId;
-			dsMsg.sendMsg = sendMsg;
-            this.$socket.emit('tbClientCommands'/*+this.id*/, this.id, dsMsg)
+		clearDatastore(clientMsgId)	{
+			this.saveToDatastore(null,null,null,null,clientMsgId);
 		}
 	}
-}
+// ******************************************************************************************************************************************
+}  // end of export default
 // ******************************************************************************************************************************************
 // My functions
 // ******************************************************************************************************************************************
 // Determine if the client should accept the incoming message
-function acceptMsg(msg,$widgetScope)
+function acceptMsg(msg,vThis)
 {
-	 // Special utility msg for testing client/server connections. bypasses all scope constraints
-	if (msg.tbCmd === "tbTestConnection")
-		return true;
-
-	// Ignore commands which are meant for the server-side node only.
+	// filter out commands handled by the server node (but are still broadcasted by Node-red to the dashboard)
 	switch (msg.tbCmd)
 	{
+		case "tbShowDatastore":
+		case "tbGetDsData":
+		case "tbGetDsDataCount":
 		case "tbGetClientCount":
 			return false;
 	}
+	
+	 // accept the special utility msg for testing client/server connections. bypasses all scope constraints
+	if (msg.tbCmd === "tbTestConnection")
+		return true;
 
 	let msgClientId = msg?._client?.socketId || "";  // get client Id
 
@@ -215,9 +223,9 @@ function acceptMsg(msg,$widgetScope)
 			case "tbAllClients":
 				return true;
 			case "tbSameClient":
-				return (msgClientId && msgClientId === $widgetScope.$socket.id);
+				return (msgClientId && msgClientId === vThis.$socket.id);
 			case "tbNotSameClient":
-				return (msgClientId !== $widgetScope.$socket.id);
+				return (msgClientId !== vThis.$socket.id);
 			case "tbNone":
 			default:
 				return false;
@@ -229,8 +237,8 @@ function acceptMsg(msg,$widgetScope)
 		return true;
 		
 	// When msg from specific client, accept per shared/multiUser mode
-	if ($widgetScope.props.multiUser)  // in multi-user, accept only from own client
-		return (msgClientId === $widgetScope.$socket.id);
+	if (vThis.props.multiUser)  // in multi-user, accept only from own client
+		return (msgClientId === vThis.$socket.id);
 	else
 	{
 		// in shared mode, accept data-changing messages even if originated by other clients
@@ -243,241 +251,238 @@ function acceptMsg(msg,$widgetScope)
 		if (changeMsgs.includes(msg.tbCmd))
 			return true;
 		else
-			return (msgClientId === $widgetScope.$socket.id);
+			return (msgClientId === vThis.$socket.id);
 	}
 }
 // ********************************************************************************************************************
-function processMsg(msg,$widgetScope)
+function processMsg(msg,vThis)
 {
 	delete msg.error;
 	const cmd = msg.tbCmd;
 	
-	//------------------------------------------------------------------
-	// Node commands
-	//------------------------------------------------------------------
 	switch (cmd)
 	{
+//------------------------------------------------------------------
+// Table creation & deletion commands
+//------------------------------------------------------------------
 		case "tbCreateTable":
-			debugLog($widgetScope.id+": creating table from msg");
+			debugLog(vThis.id+": creating table from msg");
 			if (!msg.tbInitObj)
 			{
 				msg.error = "Invalid table configuration";
-				$widgetScope.send(msg);
+				vThis.send(msg);
 				return;
 			}
-			if (!$widgetScope.props.allowMsgFuncs && (!!msg.tbFuncs || hasInlineFuncs(msg.tbInitObj)))
+			if (!vThis.props.allowMsgFuncs && (!!msg.tbFuncs || hasInlineFuncs(msg.tbInitObj)))
 			{
-				msg.error = "Messages containing function definitions are blocked in the node configuration";
-				$widgetScope.send(msg);
+				msg.error = "Messages with function definitions are blocked in the node configuration";
+				vThis.send(msg);
 				return;
 			}
 			
-			const funcs = parseFuncSheet(msg.tbFuncs);
-			createTable(msg.tbInitObj,funcs,$widgetScope)
-			    .then(result => { 
-					if (!$widgetScope.props.multiUser)
+			const funcs = tbParseFuncSheet(msg.tbFuncs);
+			createTable(msg.tbInitObj,funcs,null,vThis)
+			    .then((result) => { 
+					if (!vThis.props.multiUser)
 					{
 						const data = msg.tbInitObj.data || [];
-						$widgetScope.saveToDatastore($widgetScope.activeTblConfig,funcs,data,null,msg._msgid);
+						vThis.saveToDatastore(vThis.activeTblConfig,funcs,data,null,msg._msgid);
 					}
 					msg.payload = result;				
-					$widgetScope.send(msg);
 				})
-				.catch(error => {
+				.catch((error) => {
 					msg.error = error;
-					$widgetScope.send(msg);
-				});
+					if (!vThis.props.multiUser)
+						vThis.clearDatastore(msg._msgid);
+				})
+				.finally(()=>{ vThis.send(msg) });
+			return;
+		case "tbDestroyTable":
+		case "destroy":  // Overloads Tabulator.destroy(), to enable graceful cleanup
+			destroyTable(vThis);
+			if (!vThis.props.multiUser)
+				vThis.clearDatastore(msg._msgid);
+			vThis.send(msg);
 			return; 
 		case "tbResetTable":
-			debugLog($widgetScope.id+": reloading table from node configuration");
-			if (!$widgetScope.props.multiUser)  // Clear datastore
-				$widgetScope.clearDatastore(msg._msgid);
-			if ($widgetScope.origTblConfig)
-				createTable($widgetScope.origTblConfig,$widgetScope.origTblFuncs,$widgetScope)
-			    .then(result => { 
-					msg.payload = "Table reset to original configuration";
-					$widgetScope.send(msg);
-				})
-				.catch(error => {
-					msg.error = error;
-					$widgetScope.send(msg);
-				});
-			else
-			{
-				destroyTable($widgetScope);
-				$widgetScope.send(msg);
-			}
-			return;
-		case "tbCellEditSync":	// internal command notifying an in-cell edit in another client
-			debugLog($widgetScope.id+": received cell edit sync");
-			cellEditSync($widgetScope,msg);
-			return; 
+			debugLog(vThis.id+": reloading table from node configuration");
 
-		// Utility/testing commands
-		//-------------------------
+			createTable(vThis.origTblConfig,vThis.origTblFuncs,null,vThis)
+            .then((val)=>{
+				msg.payload = "Table reset to original configuration";
+				if (!vThis.props.multiUser)
+				{
+					const cfg = cloneObj(vThis.origTblConfig);
+					const data = cfg.data || [];
+					delete cfg.data;
+					vThis.saveToDatastore(cfg,vThis.origTblFuncs,data,null,msg._msgid);
+				}
+			})
+            .catch((err)=>{console.log("Table creation error:",err)})
+			.finally(()=>{vThis.send(msg)});
+            return;
+//------------------------------------------------------------------
+// internal synchronization commands
+//------------------------------------------------------------------
+		case "tbCellEditSync":	// internal sync command received when a cell is edited (from UI) in another client
+			debugLog(vThis.id+": received cell edit sync");
+			cellEditSync(msg,vThis);
+			return; 
+//------------------------------------------------------------------
+// utility & testing commands
+//------------------------------------------------------------------
 		case "tbTestConnection":
 			msg.payload = "Test Connection";
-			msg.nodeId = $widgetScope.id;
-			msg.clientSockId = $widgetScope.$socket.id;
+			msg.nodeId = vThis.id;
+			msg.clientSockId = vThis.$socket.id;
 			if (!msg.listener)
 				msg.listener = 'tbClientCommands';
 			switch (msg.listener)
 			{
 				//case 'widget-action':
-				//	$widgetScope.$socket.emit('widget-action', $widgetScope.id, msg)
+				//	vThis.$socket.emit('widget-action', vThis.id, msg)
 				//	break;
 				case 'tbSendMessage':
-					$widgetScope.$socket.emit('tbSendMessage'/*+$widgetScope.id*/, $widgetScope.id, msg)
+					vThis.$socket.emit('tbSendMessage'/*+vThis.id*/, vThis.id, msg)
 					break;
 				case 'tbClientCommands':
 					msg.tbClientCmd = 'tbTestConnection';
-					$widgetScope.$socket.emit('tbClientCommands'/*+$widgetScope.id*/, $widgetScope.id, msg)
+					vThis.$socket.emit('tbClientCommands'/*+vThis.id*/, vThis.id, msg)
 			}
 			console.log("Sent connection test ping to listener "+msg.listener);
-			return; 
-		case 'tbShowDatastore':
-			$widgetScope.showDatastore((msg.sendMsg ? true : false),msg._msgid);
 			return; 
 /*
 		case "tbSetTableId":	// internal command to set an Id to the table's HTML Div, to allow direct API access from external nodes
 			let divId = msg.tbTableId ? msg.tbTableId.trim() : "";
 			if (divId === "" || divId.match(/^[a-zA-Z_-][a-zA-Z0-9_-]*$/) !== null)
 			{
-				$widgetScope.tblId = divId;
-				$widgetScope.$refs.tabulatorDiv.id = divId;
+				vThis.tblId = divId;
+				vThis.$refs.tabulatorDiv.id = divId;
 			}
 			else
 				msg.error = "Invalid Table Id";
-			$widgetScope.send(msg);
+			vThis.send(msg);
 			return; 
 */
 	}
-	//------------------------------------------------------------------
-	// Table commands (accepted only when table is built & ready)
-	//------------------------------------------------------------------
-	if (!$widgetScope.tblReady)
+//------------------------------------------------------------------
+// Table commands (accepted only when table is built & ready)
+//------------------------------------------------------------------
+	if (!vThis.tblReady)
 	{
-		msg.error = 'Table does not exist';
-		$widgetScope.send(msg);
+		msg.error = 'Table does not exist or is not ready';
+		vThis.send(msg);
 		return;
 	}
+	const args = msg.tbArgs ? cloneObj(msg.tbArgs) : [];	// Clone the args array to avoid proxy issues
+	if (!vThis.props.allowMsgFuncs && hasInlineFuncs(args))
+	{
+		msg.error = "Messages with function definitions are blocked in the node configuration";
+		vThis.send(msg);
+		return;
+	}
+// ***********************************************
 	switch (cmd)
 	{
-		//------------------------------------------------------------------
-		// Node functions
-		//------------------------------------------------------------------
-		case "tbDestroyTable":
-		case "destroy":  // Overloads Tabulator.destroy(), to enable graceful cleanup
-			destroyTable($widgetScope,msg,true);
-			if (!$widgetScope.props.multiUser)
-				$widgetScope.saveToDatastore(null,null,null,null,msg._msgid);
-				$widgetScope.send(msg);
-			return; 
+//------------------------------------------------------------------
+// wrapped/enhanced table-handling commands
+//------------------------------------------------------------------
 		case "tbSetStyle":
-			setStyle(msg.tbScope,msg.tbStyles,$widgetScope,msg);
+			setStyle(msg.tbScope,msg.tbStyles,msg,vThis);
 			return; 
 		case "tbClearStyles":
-			if ($widgetScope.activeTblConfig)
-			{
-				debugLog($widgetScope.id+": clearing styles, reloading table with current config & data");
-				const cfg = cloneObj($widgetScope.activeTblConfig);
-				const data = $widgetScope.tbl.getData();
-				cfg.data = data;
-				createTable(cfg,$widgetScope.activeTblFuncs,$widgetScope)
-					.then(result => { 
-						if (!$widgetScope.props.multiUser)
-							$widgetScope.saveToDatastore($widgetScope.activeTblConfig,$widgetScope.activeTblFuncs,data,null,msg._msgid);
-						msg.payload = "Table styles cleared";
-						$widgetScope.send(msg);
-					})
-					.catch(error => {
-						msg.error = error;
-						$widgetScope.send(msg);
-					});
-			}
+			// reload table (with its current configuration), dropping all styles
+			debugLog(vThis.id+": clearing styles, reloading table with current config & data");
+			const cfg = cloneObj(vThis.activeTblConfig);
+			const data = vThis.tbl.getData();
+			cfg.data = data;
+			createTable(cfg,vThis.activeTblFuncs,null,vThis)
+				.then(result => { 
+					if (!vThis.props.multiUser)  
+						// update only style map
+						vThis.saveToDatastore(undefined /*config*/,undefined /*funcs*/,undefined /*data*/,null /*styleMap */,msg._msgid);
+					msg.payload = "Table styles cleared";
+				})
+				.catch(error => {
+					msg.error = error;
+					if (!vThis.props.multiUser)
+						vThis.clearDatastore(msg._msgid);
+				})
+				.finally(()=>{ vThis.send(msg) });
 			return;
 		case "tbSetGroupBy":
-			if (!$widgetScope.props.allowMsgFuncs && msg.hasOwnProperty("tbGroupHeader") && hasInlineFuncs(msg.tbGroupHeader))
+			if (!vThis.props.allowMsgFuncs && msg.hasOwnProperty("tbGroupHeader") && hasInlineFuncs(msg.tbGroupHeader))
 			{
-				msg.error = "Messages containing function definitions are blocked in the node configuration";
-				$widgetScope.send(msg);
+				msg.error = "Messages with function definitions are blocked in the node configuration";
+				vThis.send(msg);
 				return;
 			}
-			setGroupBy($widgetScope,msg);
+			setGroupBy(msg,vThis);
 			return;
-		//------------------------------------------------------------------
-		// Managed Tabulator API calls
-		//---------------------------------------------------------------------------------
-		// Data-changing commands - called Async (response message is sent by the callback)
-		//---------------------------------------------------------------------------------
-		case "updateRow":
-		case "updateOrAddRow":
-			if ($widgetScope.props.validateRowIds && msg.tbArgs[1].hasOwnProperty($widgetScope.rowIdField))
-			{
-				const row = msg.tbArgs[1];
-				if (!checkAddedDupRows([row],$widgetScope))
-				{
-					msg.error = "Duplicate row Id";
-					$widgetScope.send(msg);
-					return;
-				}
-			}
-			tabulatorAsyncAPI(cmd,msg.tbArgs,msg,$widgetScope);
-			return;
+// ********************************************************************************
+// direct Tabulator API calls
+// ********************************************************************************
+// data-changing commands
+//-----------------------------------------------------------------------------------------------------------------
+	// async invocation (Tabulator API call returns a promise, response message is sent once processing is complete
+	//-------------------------------------------------------------------------------------------------------------
 		case "setData":
 		case "replaceData":
 		case "updateData":
 		case "updateOrAddData":
-			if ($widgetScope.props.validateRowIds && !checkInputRowIds(msg.tbArgs[0],$widgetScope.rowIdField))
+			// check that all input rows have valid and unique Ids
+			if (vThis.props.validateRowIds && !checkInputRowIds(args[0],vThis.rowIdField))
 			{
-				msg.error = "Duplicate or invalid row Id's";
-				$widgetScope.send(msg);
+				msg.error = "Missing, invalid or duplicate input row Id's";
+				vThis.send(msg);
+				return;
 			}
-			else
-				tabulatorAsyncAPI(cmd,msg.tbArgs,msg,$widgetScope);
+			tabulatorAsyncAPI(cmd,args,msg,vThis);
 			return;
 		case "addData":
-			if ($widgetScope.props.validateRowIds && (!checkInputRowIds(msg.tbArgs[0],$widgetScope.rowIdField) || !checkAddedDupRows(msg.tbArgs[0],$widgetScope)))
+			// check that all input rows have valid and unique Ids, and also detect duplication of existing Ids
+			if (vThis.props.validateRowIds && (!checkInputRowIds(args[0],vThis.rowIdField) || !checkAddedDupRows(args[0],vThis)))
 			{
-				msg.error = "Duplicate or invalid row Id's";
-				$widgetScope.send(msg);
+				msg.error = "Missing, invalid or already existing row Id's";
+				vThis.send(msg);
+				return;
 			}
-			else
-				tabulatorAsyncAPI(cmd,msg.tbArgs,msg,$widgetScope);
+			tabulatorAsyncAPI(cmd,args,msg,vThis);
 			return;
 		case "addRow":
-			if ($widgetScope.props.validateRowIds)
+			if (vThis.props.validateRowIds && (!checkInputRowIds([args[0]],vThis.rowIdField) || !checkAddedDupRows([args[0]],vThis)))
 			{
-				const row = msg.tbArgs[0];
-				const idField = $widgetScope.rowIdField;
-				if (!row || !row.hasOwnProperty(idField) || row[idField] == undefined || row[idField] == null)
-				{
-					msg.error = "Invalid or missing row Id";
-					$widgetScope.send(msg);
-					return;
-				}
-				if (!checkAddedDupRows([row],$widgetScope))
-				{
-					msg.error = "Duplicate row Id";
-					$widgetScope.send(msg);
-					return;
-				}
+				msg.error = "Missing, invalid or already existing row Id";
+				vThis.send(msg);
+				return;
 			}
-			tabulatorAsyncAPI(cmd,msg.tbArgs,msg,$widgetScope);
+			tabulatorAsyncAPI(cmd,args,msg,vThis);
 			return;
+		case "updateOrAddRow":
+			if (vThis.props.validateRowIds && !checkInputRowIds([args[1]],vThis.rowIdField))  // checking the 2d argument
+			{
+				msg.error = "Missing or invalid row Id in data object";
+				vThis.send(msg);
+				return;
+			}
+			tabulatorAsyncAPI(cmd,args,msg,vThis);
+			return;
+		case "updateRow":
 		case "deleteRow":
-			tabulatorAsyncAPI(cmd,msg.tbArgs,msg,$widgetScope);
+			// no pre-validation needed
+			tabulatorAsyncAPI(cmd,args,msg,vThis);
 			return;
-		//------------------------------------------------------------------
-		// Data-changing commands - called Sync
-		//------------------------------------------------------------------
+	//----------------------------------------------------------------------------------------------------	
+	// synchronous invocation (Tabulator API call returns immediately)
+	//----------------------------------------------------------------------------------------------------
 		case "clearData":
-			tabulatorSyncAPI(cmd,msg.tbArgs,msg,$widgetScope);
-			updateAndRespond(msg,$widgetScope);
+			tabulatorSyncAPI(cmd,args,msg,vThis);
+			updateAndRespond(msg,vThis);
 			return;
-		//------------------------------------------------------------------
-		// Read-only commands (void or returning data) - called sync
-		//------------------------------------------------------------------
+
+//-----------------------------------------------------------------------------------------------------------------
+// Data non-changing commands (queries etc.) - always synchronous invocation (Tabulator API call returns immediately)
+//-----------------------------------------------------------------------------------------------------------------
 		case "getData":
 		case "getDataCount":
 		case "searchData":
@@ -494,80 +499,148 @@ function processMsg(msg,$widgetScope)
 		case "removeFilter":
 		case "clearFilter":
 		case "download":
-			tabulatorSyncAPI(cmd,msg.tbArgs,msg,$widgetScope);
-			$widgetScope.send(msg);
+			if (setFuncs(args,vThis.activeTblFuncs) > 0) // errCount > 0
+				console.warn("Missing or invalid user-defined function");
+			msg.payload = tabulatorSyncAPI(cmd,args,msg,vThis);
+			vThis.send(msg);
 			return;
 		//------------------------------------------------------------------------------
-		// Read-only commands (returning data) - called sync with special result parsing
+		// data-query commands called sync, which require special result parsing
 		//------------------------------------------------------------------------------
 		case "getRow":
-			tabulatorSyncAPI(cmd,msg.tbArgs,msg,$widgetScope,function(rowComponent,msg){  // applies parser func on returned row component
-				if (rowComponent)
-					msg.payload = rowComponent.getData();
-				else
-					msg.error = "Invalid Row Id";
-			});
-			$widgetScope.send(msg);
+			const rowComponent = tabulatorSyncAPI(cmd,args,msg,vThis)
+			if (rowComponent)
+				msg.payload = rowComponent.getData();
+			else
+				msg.error = "Invalid Row Id";
+			vThis.send(msg);
 			return;
 		default:
+		/*
 		//------------------------------------------------------------------
-		// Freehand (unmanaged) API call
+		// Freehand (unsupervised) API call (undocumented)
 		//------------------------------------------------------------------
-			if (!cmd || typeof $widgetScope.tbl[cmd] !== "function")
-			{
-				msg.error = "Missing or invalid command";
-				$widgetScope.send(msg);
-				return;
-			}
-			tabulatorFreehandAPI(cmd,msg.tbArgs,msg,$widgetScope);
+			if (cmd && typeof vThis.tbl[cmd] === "function")
+				tabulatorFreehandAPI(cmd,args,msg,vThis);
+		*/
+			msg.error = "Missing or invalid command";
+			vThis.send(msg);
 			return;
 	}
 }
 // ********************************************************************************************************************
-function updateAndRespond(msg,$widgetScope)
+// Tabulator API call wrappers (Async, Sync)
+// ********************************************************************************************************************
+function tabulatorAsyncAPI(cmd,args,msg,vThis)
 {
+	debugLog("Calling '"+cmd+"', API mode=Async");
+
+	vThis.tbl[cmd](...args)
+		.then((resolveVal)=>{ debugLog("resolve value for async API=",resolveVal)})
+		.catch((err)=>{msg.error = err})
+		.finally(()=>{updateAndRespond(msg,vThis)});  // update Datastore even upon error, as cmd may have been applied partially
+}
+//----------------------------------------------------
+function tabulatorSyncAPI(cmd,args,msg,vThis)
+{
+	debugLog("Calling '"+cmd+"', API mode=Sync");
+
+	try  {
+		const data = vThis.tbl[cmd](...args);
+		return data;
+	}
+	catch (err) {
+		msg.error = err.message;
+	}
+}
+/*
+function tabulatorFreehandAPI(cmd,args,msg,vThis)
+{
+	debugLog("Calling '"+cmd+"', API mode=Freehand");
+
+	// Execute the command in a way which supports both sync and async
+	let response = null;
+	try {
+		response = vThis.tbl[cmd](...args)
+		//	const isPromise = !!response && typeof response === 'object' && typeof response.then === 'function'; 
+		if (response instanceof Promise)
+		{
+			response.then((resolveVal)=>{ debugLog("resolve value for freehand API=",resolveVal)})
+			.catch((err)=>{msg.error = err})
+			.finally(()=>{updateAndRespond(msg,vThis)});  // update Datastore even upon error, as cmd may have been applied partially
+		}
+		else  // handle sync result
+		{
+			if (response !== undefined && response !== null)
+			{
+				// Validate that the returned data is sendable in a msg
+				if (isSendable(response))
+					msg.payload = response;
+				else
+					msg.error = "API response cannot be serialized to a msg";
+			}
+			vThis.send(msg);
+		}
+	}
+	catch (err) {  // handle sync error
+		msg.error = err;
+		vThis.send(msg);
+	}
+}
+function isSendable(obj)
+{
+	try  {
+		let x = JSON.stringify(obj)
+		return true;		
+	}
+	catch (err)  {
+		// obj not serializable or does not have a 'toJSON' function
+		return false;
+	}
+}
+*/
+
+// ********************************************************************************************************************
+function updateAndRespond(msg,vThis)
+{
+	debugLog("Executing updateAndRespond()");
+
 	//---------------------------------------------------------------------------------------------------------
-	// Generic post-command handler, which:
-	//   - for 'change' commands (in shared mode), updates the table's style map (if needed), and the datastore
+	// Generic post-command callback for async data-changing commands, which:
+	//   - in shared mode, update the table's style map (if needed), and the datastore
 	//   - sends a response command
 	//---------------------------------------------------------------------------------------------------------
-	if (!$widgetScope.props.multiUser)
+	if (!vThis.props.multiUser)
 	{
 		// Update style map, in case rows have been added or deleted
-		let map = $widgetScope.tblStyleMap;
-		if (map)
+		const map = vThis.tblStyleMap;
+		if (map)  // styleMap exists, adjust it according to the data change
 		{
-			let tbl = $widgetScope.tbl;
-			let	rowIdField = $widgetScope.rowIdField;
+			const tbl = vThis.tbl;
+			const rowIdField = vThis.rowIdField;
 
 			switch (msg.tbCmd)
 			{
 				case "setData":
 				case "replaceData":
-				//case "updateData": - nothing to do here
-				case "addData":
-				case "updateOrAddData":
-					if (map.rows.length > 0)
-					{
-						const tblRows = tbl.getRows();
-						map.rows = map.rows.filter((row) => {		// keep only row-style objects of rows which exists in the new data
-							let index = tblRows.findIndex((rowComp) => rowComp.getCell(rowIdField).getValue() == row.rowId);  // not ===
-							//console.log("row",row.rowId,found ? " found" : " not found");
-							return index >= 0 ? true : false;
-						});
-					}
-					applyFromStyleMap(map,tbl);
+					// remove row-style objects of rows which no longer exist
+					const allRows = tbl.getRows();
+					map.rows = map.rows.filter((row) => {
+						const index = allRows.findIndex((rowComp) => {rowComp.getCell(rowIdField).getValue() == row.rowId});  // not ===
+						return index >= 0 ? true : false;
+					});
+					applyFromStyleMap(vThis);
 					break;
+				case "addData":
+				//case "updateData": - nothing to do here
+				case "updateOrAddData":
 				case "addRow":
 				// case "updateRow": - nothing to do here
 				case "updateOrAddRow":
-					//rowId = msg.tbArgs[0][rowIdField];
-					//if (rowId && map.tblStyles)
-					if (map.tblStyles)
-						applyFromStyleMap(map,tbl)
+					applyFromStyleMap(vThis)
 					break;
 				case "deleteRow":
-					let rowId = msg.tbArgs[0];
+					const rowId = msg.tbArgs[0];
 					map.rows = map.rows.filter((row) => row.rowId != rowId); // not !==
 					break;
 				case "clearData":
@@ -575,312 +648,309 @@ function updateAndRespond(msg,$widgetScope)
 					break;
 			}
 		}
-		updateDatastore($widgetScope,msg);
+		vThis.saveToDatastore(vThis.activeTblConfig,vThis.activeTblFuncs,vThis.tbl.getData(),vThis.tblStyleMap,msg._msgid);
 	}
-	$widgetScope.send(msg);
+	vThis.send(msg);
 }
 // ********************************************************************************************************************
-function createTable(cfg,funcs,$widgetScope)
-//-------------------------------------------------------------------------------------------------------------
-// Called asynchronously from: Initial load, tbCreateTable command, tbResetTable command, tbClearStyles command
-//-------------------------------------------------------------------------------------------------------------
+function createTable(cfg,funcs,styleMap,vThis)
+//------------------------------------------------------------------------------------------------------
+// Called asynchronously from: Initial load, and the commands tbCreateTable, tbResetTable, tbClearStyles
+//------------------------------------------------------------------------------------------------------
 {
 return new Promise((resolve, reject) => {
 
-	if (!cfg)
+	// Check row Id validity & no dups
+	if (vThis.props.validateRowIds && Array.isArray(cfg?.data) && !checkInputRowIds(cfg.data,vThis.rowIdField))
 	{
-		reject("Invalid table configuration");
+		const errMsg = "Missing, invalid or duplicate row Id's in table configuration"; 
+		console.error(errMsg);
+		reject(errMsg);
 		return;
 	}
 
-	// Check row Id validity & no dups
-	if (cfg.data && $widgetScope.props.validateRowIds)
+	destroyTable(vThis);  // destroy current table (if exists)
+	if (!cfg)
 	{
-		const idField = cfg.hasOwnProperty("index") ? cfg.index : "id";
-		if (!checkInputRowIds(cfg.data,idField))
-		{
-			const errMsg = "Invalid or duplicate row Id's"; 
-			console.error(errMsg);
-			reject(errMsg);
-			return;
-		}
+		resolve("Null table configuration - table not created");
+		return;
 	}
 
 	// clone the configuration object (rather than pass it as reference), to protect from proxy issues
 	const initObj = cloneObj(cfg);
-	if (setFuncs(initObj,funcs) > 0) // errCount > 0, but continue table creation with bad functions, so user doesn't panic and can troubleshoot
+
+	// create & set the functions in the configuration
+	const activeFuncs = !!funcs ? funcs : vThis.origTblFuncs;
+	if (setFuncs(initObj,activeFuncs) > 0) // errCount > 0, but allow table creation with missing functions, so user doesn't panic and can troubleshoot
 	{
-		console.error("Missing or Invalid user-defined functions");
+		console.warn("Missing or Invalid user-defined functions");
 		//reject("Missing or Invalid user-defined functions");
 		//return;
 	}
 
-	// Create a new table
+	// Create the new table
 	//-------------------
-	destroyTable($widgetScope);  // destroy current table (if exists)
 	try  
 	{
-		if (!$widgetScope.tblDivId)
-			$widgetScope.tbl = new Tabulator($widgetScope.$refs.tabulatorDiv, initObj);
+		if (!vThis.tblDivId)
+			vThis.tbl = new Tabulator(vThis.$refs.tabulatorDiv, initObj);
 		else
-			$widgetScope.tbl = new Tabulator("#"+$widgetScope.tblDivId, initObj);
+			vThis.tbl = new Tabulator("#"+vThis.tblDivId, initObj);
 		
 			// console.log("Table created");
-			// $widgetScope.send({payload:"Table created"});
+			// vThis.send({payload:"Table created"});
 		
 		// Table creation is asynchronous. The setup resumes after the table finished initializing, in the below "TableBuilt" callback
-		//-----------------------------------------------------------------------------------------------------------------------
-		$widgetScope.tbl.on("tableBuilt", function()    {
+		//----------------------------------------------------------------------------------------------------------------------------
+		vThis.tbl.on("tableBuilt", function()    {
 
 			if (cfg.hasOwnProperty("index"))	// overriding the default 'id' field as the row identifier
-				$widgetScope.rowIdField = cfg.index;
+				vThis.rowIdField = cfg.index;
 
 			// Set notifications for the selected events 
-			setEventNotifications($widgetScope);
+			setEventNotifications(vThis);
 
-			if ($widgetScope.props.events.includes("tableBuilt"))	// if 'tableBuilt' is explicitely specified in the notification list, send the notification from here
+			if (vThis.props.events.includes("tableBuilt"))	// if 'tableBuilt' is explicitely specified in the notification list, send the notification from here
 			{
 				let eventMsg = new tbEventMsg("tableBuilt");
 				eventMsg.payload = "Table built and ready";
-				$widgetScope.sendNotification(eventMsg);
+				vThis.sendNotification(eventMsg);
 			}
 
-			$widgetScope.tblReady = true;
-			$widgetScope.activeTblConfig = cloneObj(cfg);
-			delete $widgetScope.activeTblConfig.data;
-			if (funcs)
-				$widgetScope.activeTblFuncs = cloneObj(funcs);
-			console.log($widgetScope.id+": Table built and ready");
+			vThis.activeTblConfig = cloneObj(cfg);
+			delete vThis.activeTblConfig.data;
+			vThis.activeTblFuncs = cloneObj(activeFuncs);
+			
+			if (styleMap)
+			{
+				vThis.tblStyleMap = cloneObj(styleMap);
+				applyFromStyleMap(vThis);
+			}
+			else
+				vThis.tblStyleMap = null;
+
+			vThis.tblReady = true;
+			console.log(vThis.id+": Table built and ready");
             resolve("Table built and ready");
 		});  // on TableBuilt
 	}
 	catch (err)
 	{
-		console.error($widgetScope.id+": Table creation failed",err);
-		destroyTable($widgetScope);
+		console.error(vThis.id+": Table creation failed",err);
+		destroyTable(vThis);
 		reject("Table creation failed");
 	}	
 }); // promise
 }
 // ********************************************************************************************************************
-function initialTableLoad(dsImage,$widgetScope)
+function destroyTable(vThis)
 {
-	// dsDummyImage = {ds:"Dummy"} - workaround: server does not send this event if no data in datastore, so we force dummy data
+	//---------------------------------------------------------------------------------------
+	// Called synchronously from: unmounted(), tbDestroyTable command,
+	// and as part of createTable, resetTable & clearStyles
+	//----------------------------------------------------------------------------------------
 
-	if ($widgetScope.props.multiUser || !dsImage || dsImage.ds === "Dummy")
+	if (vThis.tbl)
 	{
-		if ($widgetScope.origTblConfig)
+		vThis.tbl.clearData();
+		vThis.tbl.destroy();
+		console.log(vThis.id+": Table destroyed");
+	}
+	vThis.tbl = null;
+	vThis.tblReady = false;
+	vThis.activeTblConfig = null;
+	vThis.activeTblFuncs = null;
+	vThis.tblStyleMap = null;
+}
+// ********************************************************************************************************************
+function initialTableLoad(dsImage,vThis)
+{
+	// multi-user mode: no datastore, create table from node configuration
+	//--------------------------------------------------------------------
+	if (vThis.props.multiUser)
+	{
+		if (vThis.origTblConfig)
 		{
-			console.log($widgetScope.id+": Creating table from node configuration");
-			createTable($widgetScope.origTblConfig,$widgetScope.origTblFuncs,$widgetScope)
-			    .then(result => {}) //{console.log("tbl init success, result=",result)})
-				.catch(error => {}) //{console.error("tbl init error, err=",error)});
+			console.log(vThis.id+": Creating table from node configuration");
+			createTable(vThis.origTblConfig,vThis.origTblFuncs,null,vThis)
+			    .then((result) => {}) //{console.log("tbl init success, result=",result)})
+				.catch((error) => {}) //{console.error("tbl init error, err=",error)});
 		}
 		else
-			console.log($widgetScope.id+": No table configuration, table not created.");
+			console.log(vThis.id+": No table configuration, table not created.");
 		return;
 	}
 	
-	// shared mode with image in datastore
-	if (!dsImage.config)  // stored image = 'no table' (not to confuse with 'no stored image')
+	// shared mode: load from datastore
+	//------------------------------------
+	if (!dsImage.config)  // stored image = 'no table'
 	{
-		console.log($widgetScope.id+": null table configuration in datastore");
+		console.log(vThis.id+": No table configuration in datastore, table not created.");
 		return;
 	}
 	
 	// image has table definition
-	console.log($widgetScope.id+": Creating table from datastore image");
+	console.log(vThis.id+": Creating table from datastore image");
 	const initObj = dsImage.config;
 	if (dsImage.data)
 		initObj.data = dsImage.data;
 
 	// create the table
-	createTable(initObj,dsImage.funcs,$widgetScope)
-		.then(result => {
-			if (dsImage.styleMap)
-			{
-				applyFromStyleMap(dsImage.styleMap,$widgetScope.tbl);
-				$widgetScope.tblStyleMap = dsImage.styleMap;
-			}
-		})
-		.catch(error => {}) //{console.error("tbl init error, err=",error)});
+	createTable(initObj,dsImage.funcs,dsImage.styleMap,vThis)
+		.then((result) => {})
+		.catch((error) => {}) //{console.error("tbl init error, err=",error)});
 }
 // ********************************************************************************************************************
-function destroyTable($widgetScope)
-{
-	//--------------------------------------------------------------------------
-	// Called from: tbDestroyTable command, from within createTable, unmounted()
-	//--------------------------------------------------------------------------
-
-	if ($widgetScope.tbl)
-	{
-		$widgetScope.tbl.clearData();
-		$widgetScope.tbl.destroy();
-		console.log($widgetScope.id+": Table destroyed");
-	}
-	$widgetScope.tbl = null;
-	$widgetScope.tblReady = false;
-	$widgetScope.activeTblConfig = null;
-	$widgetScope.activeTblFuncs = null;
-	$widgetScope.tblStyleMap = null;
-}
-// ********************************************************************************************************************
-function updateDatastore($widgetScope,msg)
-{
-	if (!$widgetScope.activeTblConfig)
-	{
-		$widgetScope.saveToDatastore(null,null,null,null,msg?._msgid);
-		return;
-	}
-
-	$widgetScope.saveToDatastore(
-		$widgetScope.activeTblConfig,
-		$widgetScope.activeTblFuncs,
-		$widgetScope.tblReady ? $widgetScope.tbl.getData() : null,
-		$widgetScope.tblStyleMap,
-		msg?._msgid
-	);
-}
-// ********************************************************************************************************************
-function setStyle(scope,styles,$widgetScope,msg)
+// Style management
+//------------------------------------------------------------------------
+function setStyle(scope,styles,msg,vThis)
 {
 /*  Logic:
-if (no rowId) ==> all rows in table. Ignoring field
-else if (rowId === "tbHeader")
-	if (field) ==> single column header
-	else	   ==> all column header
-else 
-	if (field) ==> single cell
-	else  	   ==> whole row
+msg.tbScope = {rowId:2,field:"name"};         // affects the cell in row 2, column "name"
+msg.tbScope = {rowId:2};                      // affects all row 2
+msg.tbScope = {field:"name"};		          // affects the whole column "name"
+msg.tbScope = {rowId:"tbHeader",field:"name"};// affects the header of column "name"
+msg.tbScope = {rowId:"tbHeader"};             // affects all the headers
+msg.tbScope = {};                             // affects the whole table
 */
-	let rowId = scope.hasOwnProperty("rowId") ? scope.rowId : null;
-	let field = scope.field || "";
-	const hdrRowId = "tbHeader";
+	const rowId = (scope?.rowId !== undefined && scope?.rowId !== null) ? scope.rowId : null;
+	const field = scope?.field || null;
+//console.log("rowId="+rowId);
+//console.log("field="+field);
 	
 	try  {
-		if (rowId === undefined || rowId === null)	// Table scope: apply to all rows
+		if (rowId === null)
 		{
-			let rowComponents = $widgetScope.tbl.getRows();
-			for (let i = 0; i < rowComponents.length ; i++)
+			if (field === null)	// apply to whole table
 			{
-				let element = rowComponents[i].getElement();
-				applyStyles(element,styles);
+				const rowComponents = vThis.tbl.getRows();
+				for (let i = 0; i < rowComponents.length ; i++)
+				{
+					const element = rowComponents[i].getElement();
+					applyStyles(element,styles);
+				}
+			}
+			else  // apply to whole column
+			{
+				const colComponent = vThis.tbl.getColumn(field);
+				if (colComponent)
+				{
+					const cells = colComponent.getCells();
+					for (let i = 0; i < cells.length ; i++)
+					{
+						const element = cells[i].getElement();
+						applyStyles(element,styles);
+					}
+				}
+				else
+				{
+					msg.error = "Invalid field (column) name";
+					throw ""
+				}
 			}
 		}
-		else if (rowId === hdrRowId)  // Header 
+		else if (rowId == vThis.tblHeaderRowId)  // column header(s)
 		{
 			if (field)	// scope = single column header
 			{
-				let colComponent = $widgetScope.tbl.getColumn(field);
-				let element = colComponent.getElement();
-				applyStyles(element,styles);
+				const colComponent = vThis.tbl.getColumn(field);
+				if (colComponent)
+				{
+					const element = colComponent.getElement();
+					applyStyles(element,styles);
+				}
+				else
+				{
+					msg.error = "Invalid field (column) name";
+					throw ""
+				}
 			}
 			else	// scope = all column headers
 			{
-				let hdrCells = $widgetScope.tbl.getColumns();
+				const hdrCells = vThis.tbl.getColumns();
 				for (let i = 0; i < hdrCells.length ; i++)
-				{
-					let element = hdrCells[i].getElement();
-					applyStyles(element,styles);
-				}
+					if (hdrCells[i].getField())
+					{
+						const element = hdrCells[i].getElement();
+						applyStyles(element,styles);
+					}
 			}
 		}
 		else	// single row or cell
 		{
-			let rowComponent = $widgetScope.tbl.getRow(rowId);
+			const rowComponent = vThis.tbl.getRow(rowId);
 			if (!rowComponent)
+			{
 				msg.error = "Invalid row Id";
+				throw "";
+			}
 			else
 			{
-				if (field)	// ==>scope = single cell
+				if (field)	// apply to single cell
 				{
-					let cellComponent = rowComponent.getCell(field);
+					const cellComponent = rowComponent.getCell(field);
 					if (!cellComponent)
+					{
 						msg.error = "Invalid field (column) name";
+						throw "";
+					}
 					else
 					{
-						let element = cellComponent.getElement();
+						const element = cellComponent.getElement();
 						applyStyles(element,styles);
 					}
 				}
 				else  // full row
 				{
-					let element = rowComponent.getElement();
+					const element = rowComponent.getElement();
 					applyStyles(element,styles);
 				}
 			}
 		}
+		if (!vThis.props.multiUser)
+		{
+			updateStyleMap(rowId,field,styles,vThis);
+			// update DS style map only
+			vThis.saveToDatastore(undefined /*config*/,undefined /*funcs*/,undefined /*data*/,vThis.tblStyleMap,msg._msgid);
+		}
 	}
-	catch  (err) {
-		msg.error = err.message;
+	catch {
+		//console.log("Omri: error");
 	}
-	if (!msg.hasOwnProperty("error") && !$widgetScope.props.multiUser)
-	{
-		updateStyleMap($widgetScope,rowId,field,styles);
-		updateDatastore($widgetScope,msg);
-	}
-	$widgetScope.send(msg);
+	finally  {  /*msg.updMap = vThis.tblStyleMap;*/ vThis.send(msg) }
 }
-// ********************************************************************************************************************
-function applyStyles(element,styles)
+//------------------------------------------------------------------------------------------
+function updateStyleMap(rowId,field,styles,vThis)
 {
-	// example: cellObj.getElement().style.backgroundColor = "cyan";
-	for (const prop in styles)
-	{
-		if (prop in element.style)
-			element.style[prop] = styles[prop];
-		else
-			console.warn("Invalid style "+prop);
-	}		
-}
-// ********************************************************************************************************************
-function updateStyleMap($widgetScope,rowId,field,styles)
-{
-/*  Logic:
-if (no rowId) ==> all rows in table. Ignoring field
-else if (rowId === "tbHeader")
-	if (field) ==> single column header
-	else	   ==> all column header
-else 
-	if (field) ==> single cell
-	else  	   ==> whole row
-*/
-	if (!$widgetScope.tblStyleMap)
-		$widgetScope.tblStyleMap = new tbStyleMap();
-	let map = $widgetScope.tblStyleMap;
-	const hdrRowId = "tbHeader";
+	if (!vThis.tblStyleMap)
+		vThis.tblStyleMap = new tbStyleMap();
+	const map = vThis.tblStyleMap;
 	
-	if (rowId === undefined || rowId === null)	// Table scope
+	if (rowId === null)	
 	{
-		if (map.tblStyles)
-			for (const prop in styles)  // merge styles
-				map.tblStyles[prop] = styles[prop];
-		else
-			map.tblStyles = cloneObj(styles);
+		if (field === null) // Table scope
+			map.tblStyles = mergeStyles(map.tblStyles,styles);
+		else // column scope
+		{
+			if (!map.colStyles)
+				map.colStyles = {};
+			map.colStyles[field] = mergeStyles(map.colStyles[field],styles);
+		}
 	}
-	else if (rowId === hdrRowId)  // header
+	else if (rowId == vThis.tblHeaderRowId)  // column header(s)
 	{
 		if (!map.hdrStyles)
 			map.hdrStyles = {};
-		if (field)	// single header
+		if (field)	// single column header
+			map.hdrStyles[field] = mergeStyles(map.hdrStyles[field],styles);
+		else	// all column headers
 		{
-			if (map.hdrStyles.hasOwnProperty(field))
-				for (const prop in styles)  // merge styles
-					map.hdrStyles[field][prop] = styles[prop];
-			else
-				map.hdrStyles[field] = cloneObj(styles);
-		}
-		else	// all headers
-		{
-			let hdrCells = $widgetScope.tbl.getColumns();
-			for (let i = 0; i < hdrCells.length ; i++)
+			let hdrs = vThis.tbl.getColumns();
+			for (let i = 0; i < hdrs.length ; i++)
 			{
-				let colName = hdrCells[i].getField();
-				if (map.hdrStyles.hasOwnProperty(colName))
-					for (const prop in styles)  // merge styles
-						map.hdrStyles[colName][prop] = styles[prop];
-				else
-					map.hdrStyles[colName] = cloneObj(styles);
+				const colName = hdrs[i].getField();
+				if (colName)
+					map.hdrStyles[colName] = mergeStyles(map.hdrStyles[colName],styles);
 			}
 		}
 	}
@@ -893,278 +963,212 @@ else
 			map.rows.push(rowObj);
 		}
 		if (field)  // single cell
-		{
-			if (rowObj.cells.hasOwnProperty(field))
-			{
-				for (const prop in styles)  // merge styles
-					rowObj.cells[field][prop] = styles[prop];
-			}
-			else
-				rowObj.cells[field] = cloneObj(styles);
-		}
+			rowObj.cells[field] = mergeStyles(rowObj.cells[field],styles);
 		else  // whole row
-		{
-			if (rowObj.rowStyles)
-			{
-				for (const prop in styles)
-					rowObj.rowStyles[prop] = styles[prop];
-			}
-			else
-				rowObj.rowStyles = cloneObj(styles);
-		}
+			rowObj.rowStyles = mergeStyles(rowObj.rowStyles,styles);
 	}
 }
-// ********************************************************************************************************************
-function applyFromStyleMap(map,tbl)
+//------------------------------------------------------------------------------------------
+function applyFromStyleMap(vThis)
 {
-	// first apply table-level styles
-    if (map.tblStyles)
+	const map = vThis.tblStyleMap;
+	const tbl = vThis.tbl;
+	if (!map)
+		return;
+		
+	// 1st, apply table-level styles
+	if (map.tblStyles)
 	{
-		let rowComponents = tbl.getRows();
+		const rowComponents = tbl.getRows();
 		for (let i = 0; i < rowComponents.length ; i++)
 		{
-			let element = rowComponents[i].getElement();
+			const element = rowComponents[i].getElement();
 			applyStyles(element,map.tblStyles);
 		}
 	}
-	// Now apply to header row
+	// 2nd, apply to header row
 	if (map.hdrStyles)
 	{
-		if (map.hdrStyles)
-			for (const field in map.hdrStyles)
+		for (let field in map.hdrStyles)
+		{
+			const colComponent = tbl.getColumn(field);
+			if (colComponent)
 			{
-				let colComponent = tbl.getColumn(field);
-				let element = colComponent.getElement();
+				const element = colComponent.getElement();
 				applyStyles(element,map.hdrStyles[field]);
 			}
+			else
+				console.error("Invalid column header in style map");
+		}
 	}
-	// now apply to rows, and cells within them
+	// 3rd, apply to columns
+	if (map.colStyles)
+	{
+		for (let field in map.colStyles)
+		{
+			const colComponent = vThis.tbl.getColumn(field);
+			if (colComponent)
+			{
+				const cells = colComponent.getCells();
+				for (let i = 0; i < cells.length ; i++)
+				{
+					const element = cells[i].getElement();
+					applyStyles(element,map.colStyles[field]);
+				}
+			}
+			else
+				console.error("Invalid column in style map");
+		}
+	}
+	// 4th, apply to rows, and/or individual cells
 	for (let i = 0 ; i < map.rows.length ; i++)
 	{
 		let rowComponent = tbl.getRow(map.rows[i].rowId);
 		if (rowComponent)
 		{
-			// apply row-level styles
+			// 4.1 apply row-level styles
 			if (map.rows[i].rowStyles)
 			{
-				let element = rowComponent.getElement();
+				const element = rowComponent.getElement();
 				applyStyles(element,map.rows[i].rowStyles);
 			}
-			// now apply cell styles
-			for (const field in map.rows[i].cells)
+
+			// 4.2 apply cell-specific styles
+			for (let field in map.rows[i].cells)
 			{
-				let cellComponent = rowComponent.getCell(field);
-				let element = cellComponent.getElement();
-				applyStyles(element,map.rows[i].cells[field]);
+				const cellComponent = rowComponent.getCell(field);
+				if (cellComponent)
+				{
+					const element = cellComponent.getElement();
+					applyStyles(element,map.rows[i].cells[field]);
+				}
+				else
+					console.error("Invalid cell in style map");
 			}
 		}
+		else
+			console.error("Invalid row in style map");
 	}
 }
+//------------------------------------------------------------------------------------------
+function applyStyles(element,styles)
+{
+	// example: cellObj.getElement().style.backgroundColor = "cyan";
+	for (const prop in styles)
+	{
+		if (prop in element.style)
+			element.style[prop] = styles[prop];
+		else
+			console.warn("Invalid style "+prop);
+	}		
+}
+function mergeStyles(mapObj,styles)
+{
+	if (!mapObj)
+		mapObj = {};
+	for (let prop in styles)
+		mapObj[prop] = styles[prop];
+	return mapObj;
+}
 // ********************************************************************************************************************
-function setGroupBy($widgetScope,msg)
+// Group-by handling
+//-----------------------------------------------------------------
+function setGroupBy(msg,vThis)
 {
 	delete msg.error;
-	if (!msg.tbFields || (Array.isArray(msg.tbFields) && msg.tbFields.length === 0))
-	{
-		$widgetScope.tbl.setGroupBy(false); // clear grouping
-		$widgetScope.send(msg);
-		return;
-	}
-	if (!msg.tbGroupHeader || (Array.isArray(msg.tbGroupHeader) && msg.tbGroupHeader.length === 0))
-	{
-		$widgetScope.tbl.setGroupBy(msg.tbFields);
-		$widgetScope.send(msg);
-		return;
-	}
-	const fields = Array.isArray(msg.tbFields)      ? msg.tbFields : [msg.tbFields];
-	const hdrs   = Array.isArray(msg.tbGroupHeader) ? msg.tbGroupHeader : [msg.tbGroupHeader];
-	
-	if (hdrs.length > 1 && hdrs.length !== fields.length)
-	{
-		msg.error = "Mismatch between grouping fields and headers";
-		$widgetScope.send(msg);
-		return;
-	}
-		/*
-		groupHeader:function(value, count, data, group){
-			//value - the value all members of this group share
-			//count - the number of rows in this group
-			//data - an array of all the row data objects in this group
-			//group - the group component for the group
-		*/
-	try {
-		const funcArray = [];
-		for (let i = 0 ; i < fields.length ; i++)
+	try  {  // reply messages will be sent in 'finally'
+		if (!msg.tbFields || (Array.isArray(msg.tbFields) && msg.tbFields.length === 0))
 		{
-			const str = (hdrs.length === 1 ? hdrs[0] : hdrs[i]) || "";
-			if (TblFunc.prefix.test(str))
+			vThis.tbl.setGroupBy(false); // clear grouping
+			return;
+		}
+		const fields = Array.isArray(msg.tbFields) ? msg.tbFields : [msg.tbFields];
+		if (setFuncs(fields,vThis.activeTblFuncs) > 0) // errCount > 0
+		{
+			msg.error = "Invalid or missing grouping field function";
+			return;
+		}
+		vThis.tbl.setGroupBy(fields);
+
+		// set group headers
+		if (!msg.tbGroupHeader || (Array.isArray(msg.tbGroupHeader) && msg.tbGroupHeader.length === 0))
+		{
+			vThis.tbl.setGroupHeader(); // clear existing headers
+			return;
+		}
+
+		const hdrs = Array.isArray(msg.tbGroupHeader) ? msg.tbGroupHeader : [msg.tbGroupHeader];
+		if (hdrs.length > 1)
+		{
+			if(hdrs.length !== fields.length)
 			{
-				const funcDef = parseFuncProperty(str,$widgetScope.activeTblFuncs);
-				if (typeof funcDef === "string")	// i.e. error
-				{
-					msg.error = "Invalid or missing group header function";
-					$widgetScope.send(msg);
-					return;
-				}
-				const f = createFunc(funcDef);
-				if (typeof f === "function")
-					funcArray.push(f);
-				else
-				{
-					msg.error = "Invalid group header function:"+f;
-					$widgetScope.send(msg);
-					return;
-				}
+				msg.error = "Mismatching number of grouping fields and headers";
+				return;
 			}
-			else
+		}
+		else  // hdrs.length === 1
+		{
+			// replicate the header array to the length of the fields array
+			for (let j = 1 ; j < fields.length ; j++)
+				hdrs[j] = hdrs[0];
+		}
+		// Set the @F: functions
+		if (setFuncs(hdrs,vThis.activeTblFuncs) > 0) // errCount > 0
+		{
+			msg.error = "Invalid or missing grouping-header function";
+			return;
+		}
+		// set the default function into headers which did not have @F: functions
+		for (let i = 0 ; i < hdrs.length ; i++)
+		{
+			if (typeof hdrs[i] !== "function")
 			{
-				let func = function(value, count, data, group) {
-					let h = str;
+				// groupHeader:function(value, count, data, group){
+				//	value - the value all members of this group share
+				//	count - the number of rows in this group
+				//	data - an array of all the row data objects in this group
+				//	group - the group component for the group
+
+				let h = hdrs[i];
+				hdrs[i] = function(value, count, data, group) {
 					h = h.replaceAll('$field',fields[i]);
 					h = h.replaceAll('$value',value);
 					h = h.replaceAll('$count',count);
 					return h;
 				};
-				funcArray.push(func);
 			}
-			$widgetScope.tbl.setGroupBy(msg.tbFields);
-			$widgetScope.tbl.setGroupHeader(funcArray.length !== 1 ? funcArray : funcArray[0]);
 		}
+		vThis.tbl.setGroupHeader(hdrs);
 	}
 	catch (err)	{
 		msg.error = "GroupBy error: "+err;
 	}
-	$widgetScope.send(msg);
+	finally  { vThis.send(msg) }
 }
 // ********************************************************************************************************************
-function cellEditSync($widgetScope,msg)
+function cellEditSync(msg,vThis)
 {
-	debugLog("processing sync message on cell-edit in another client");
-		
+	debugLog("processing sync message from cell-edit in another client");
+
 	let data = {};
-	let idField = $widgetScope.rowIdField;
-	data[idField] = msg.payload[idField];
-	data[msg.payload.field] = msg.payload.value;
-	try  {
-		$widgetScope.tbl.updateData([data]);
-	}
-	catch (err)  {
-		console.error($widgetScope.id+": Cell-edit sync failed:",err.message);
-	}
+	data[msg.payload.idField] = msg.payload.rowId;
+	data[msg.payload.field]   = msg.payload.value;
+
+	vThis.tbl.updateData([data])
+		.then((resolveVal)=>{ debugLog("Updated cell. resolve value=",resolveVal)})
+		.catch((err)=>{
+			console.error(vThis.id+": Cell-edit sync failed:",err.message)
+		});
 	// Not sending a response msg to the flow, since this is an internal sync message
 }
 // ********************************************************************************************************************
-// Tabulator API calls (Async, Sync, Auto)
-// ********************************************************************************************************************
-function tabulatorAsyncAPI(cmd,cmdArgs,msg,$widgetScope)
+function setEventNotifications(vThis)
 {
-	debugLog("Calling '"+cmd+"', API mode=Async");
-	let args = cmdArgs ? cloneObj(cmdArgs) : [];	// Clone the args to avoid proxy issues
-
-	// Set functions into placeholder properties
-	if (!$widgetScope.props.allowMsgFuncs && hasInlineFuncs(args))
-	{
-		msg.error = "Messages containing function definitions are blocked in the node configuration";
-		$widgetScope.send(msg);
-		return;
-	}
-	if (setFuncs(args,$widgetScope.activeTblFuncs) > 0) // errCount > 0
-	{
-		msg.error = "Missing or invalid user-defined function";
-		$widgetScope.send(msg);
-		return;
-	}
-
-	$widgetScope.tbl[cmd](...args)
-		.then(function(xxx){
-			updateAndRespond(msg,$widgetScope);
-		})
-		.catch(function(err){
-			msg.error = err;
-			updateAndRespond(msg,$widgetScope);	// update Datastore even upon error, as cmd may have been applied partially
-		});
-}
-function tabulatorSyncAPI(cmd,cmdArgs,msg,$widgetScope,parserFunc)
-{
-	debugLog("Calling '"+cmd+"', API mode=Sync");
-	let args = cmdArgs ? cloneObj(cmdArgs) : [];	// Clone the args to avoid proxy issues
-	
-	// Set functions into placeholder properties
-	if (!$widgetScope.props.allowMsgFuncs && hasInlineFuncs(args))
-	{
-		msg.error = "Messages containing function definitions are blocked in the node configuration";
-		$widgetScope.send(msg);
-		return;
-	}
-	if (setFuncs(args,$widgetScope.activeTblFuncs) > 0) // errCount > 0
-	{
-		msg.error = "Missing or invalid user-defined function";
-		$widgetScope.send(msg);
-		return;
-	}
-
-	try  {
-		let data = $widgetScope.tbl[cmd](...args);
-		if (parserFunc)
-			parserFunc(data,msg);
-		else
-			if (data !== undefined && data !== null)
-				msg.payload = data;
-	}
-	catch (err) {
-		msg.error = err.message;
-	}
-}
-function tabulatorFreehandAPI(cmd,cmdArgs,msg,$widgetScope)
-{
-	debugLog("Calling '"+cmd+"', API mode=Freehand");
-	let args = cmdArgs ? cloneObj(cmdArgs) : [];	// for some reason, sometime it doesn't work with the original args object
-
-	// Execute the command in a way which supports both sync and async
-	let response = $widgetScope.tbl[cmd](...args)
-
-	let isPromise = !!response && typeof response === 'object' && typeof response.then === 'function';
-	if (isPromise)
-	{
-		let result = Promise.resolve(response)
-			.then((result)=> {
-					$widgetScope.send(msg);
-				})
-			.catch((err)=> {
-					msg.error = err;
-					$widgetScope.send(msg);
-				})
-	}
-	else
-	{
-		if (response !== undefined && response !== null)
-			// Validate that the returned data is sendable in a msg
-			if (isSendable(response))
-				msg.payload = response;
-			else
-				msg.error = "API response cannot be serialized to a msg";
-		$widgetScope.send(msg);
-	}
-}
-function isSendable(obj)
-{
-	try  {
-		let x = JSON.stringify(obj)
-		return true;		
-	}
-	catch (err)  {
-		// obj does not have a 'toJSON' function
-		return false;
-	}
-}
-// ********************************************************************************************************************
-function setEventNotifications($widgetScope)
-{
-	let eventStr = $widgetScope.props.events;
+	let eventStr = vThis.props.events;
 	let eventArr = eventStr.split(',');
 	
 	// If required for client sync, force cell-edit notifications
-	if (!$widgetScope.props.multiUser && !$widgetScope.props.events.includes("cellEdited"))
+	if (!vThis.props.multiUser && !vThis.props.events.includes("cellEdited"))
 		eventArr.push("cellEdited");
 
 	for (let i = 0 ; i < eventArr.length ; i++)
@@ -1180,20 +1184,20 @@ function setEventNotifications($widgetScope)
 			case "tableBuilt":	// Listener is set automatically during createTable(). If also explicitly requested in the events list, it will issue the notification from there
 				break;
 			case "tableDestroyed":  // Sent *after* table is destroyed
-				$widgetScope.tbl.on(ev, function(){
+				vThis.tbl.on(ev, function(){
 					let eventMsg = new tbEventMsg(ev);
-					$widgetScope.sendNotification(eventMsg);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 			case "dataChanged":
-				$widgetScope.tbl.on(ev, function(data){
+				vThis.tbl.on(ev, function(data){
 					let eventMsg = new tbEventMsg(ev);
 					eventMsg.payload = data;
-					$widgetScope.sendNotification(eventMsg);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 			case "columnMoved":
-				$widgetScope.tbl.on(ev, function(column,colArr){
+				vThis.tbl.on(ev, function(column,colArr){
 					let eventMsg = new tbEventMsg(ev);
 					const fields = [];
 					colArr.forEach((element) => fields.push(element.getField()));
@@ -1201,19 +1205,19 @@ function setEventNotifications($widgetScope)
 						movedColumn: column.getField(),
 						newColumnOrder:fields
 					};
-					$widgetScope.sendNotification(eventMsg);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 /*
 			case "dataFiltered":
-				$widgetScope.tbl.on(ev, function(filters,rows){	// filters - array of filters currently applied, rows = array of row components which pass the filters
+				vThis.tbl.on(ev, function(filters,rows){	// filters - array of filters currently applied, rows = array of row components which pass the filters
 					let filteredData = new Array(rows.length)
 					for (let i = 0 ; i < rows.length ; i++)
 						filteredData[i] = rows[i].getData();
 
 					let eventMsg = new tbEventMsg(ev);
 					eventMsg.payload = { filteredData: filteredData };
-					$widgetScope.sendNotification(eventMsg);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 */				
@@ -1225,9 +1229,9 @@ function setEventNotifications($widgetScope)
 			case "rowTap":
 			case "rowDblTap":
 			case "rowTapHold":
-				$widgetScope.tbl.on(ev, function(evObj,row){	// row = row component
+				vThis.tbl.on(ev, function(evObj,row){	// row = row component
 					let eventMsg = rowEventMsg(row,ev);
-					$widgetScope.sendNotification(eventMsg);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 			case "rowAdded":  	// sent upon addRow, updateOrAddRow, addData or updateOrAddData
@@ -1238,27 +1242,28 @@ function setEventNotifications($widgetScope)
 			case "rowMoving": // event is triggered when a row has started to be dragged
 			case "rowMoved": // event is triggered when a row has been successfully moved
 			case "rowMoveCancelled": // event is triggered when a row has been moved but has not changed position in the table
-				$widgetScope.tbl.on(ev, function(row){	// row = row component
+				vThis.tbl.on(ev, function(row){	// row = row component
 					let eventMsg = rowEventMsg(row,ev);
-					$widgetScope.sendNotification(eventMsg);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 		//-------------------------------------------------------
 		// Cell events
 		//-------------------------------------------------------
 			case "cellEdited":
-				$widgetScope.tbl.on(ev, function(cell)	{  // cell = cell component
+				vThis.tbl.on(ev, function(cell)	{  // cell = cell component
 
 					let eventMsg = new tbEventMsg(ev);
+					eventMsg._client = {socketId:vThis.$socket.id};
 					
 					let row = cell.getRow();
 					let col = cell.getColumn();
-					let rowIdField = $widgetScope.rowIdField;
+					let rowIdField = vThis.rowIdField;
 					let rowId = row.getIndex();
 					let field = col.getField();
 					let value = cell.getValue();
 					
-					if ($widgetScope.props.events.includes("cellEdited"))	// Event is registered for notifications
+					if (vThis.props.events.includes("cellEdited"))	// Event is registered for notifications
 					{
 						eventMsg.payload =   {
 							[rowIdField]: rowId,
@@ -1266,28 +1271,19 @@ function setEventNotifications($widgetScope)
 							newValue: value,
 							oldValue: cell.getOldValue()
 						}
-						$widgetScope.sendNotification(eventMsg);
+						vThis.sendNotification(eventMsg);
 					}
 					// if not multi-user, send client sync notification
-					if (!$widgetScope.props.multiUser)
+					if (!vThis.props.multiUser)
 					{
-						eventMsg.tbCmd = 'tbCellEditSync';
-						eventMsg._client = {socketId:$widgetScope.$socket.id};
 						eventMsg.payload = {
-							[rowIdField]: rowId,
-							field: field,
-							value: value
-						}
-						//piggyback the DS image on the event, to allow server node to update the datastore
-						eventMsg.dsImage = {
 							timestamp: Date.now(),
-							clientMsgId: eventMsg.notificationId,
-							config: $widgetScope.activeTblConfig,
-							funcs: $widgetScope.activeTblFuncs,
-							data:   $widgetScope.tbl.getData(),
-							styleMap: $widgetScope.tblStyleMap
+							idField: rowIdField,
+							rowId:   rowId,
+							field:   field,
+							value:   value
 						}
-						$widgetScope.sendClientCommand("tbCellEditSync",eventMsg);	
+						vThis.sendClientCommand("tbCellEditSync",eventMsg);	
 					};
 				});
 				break;
@@ -1296,16 +1292,16 @@ function setEventNotifications($widgetScope)
 			case "cellDblClick":
 			case "cellDblTap":
 			case "cellTapHold":
-				$widgetScope.tbl.on(ev, function(e,cell){	// e = mouse event, cell = cell component
+				vThis.tbl.on(ev, function(e,cell){	// e = mouse event, cell = cell component
 					let eventMsg = cellEventMsg(cell,ev);
-					$widgetScope.sendNotification(eventMsg);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 			default:
 				console.error("Event '"+ev+"' is not defined or unsupported");
 				continue;
 		}
-		debugLog($widgetScope.id+": Set '"+ev+"' notifications");
+		debugLog(vThis.id+": Set '"+ev+"' notifications");
 	}
 }
 function rowEventMsg(row,ev)
@@ -1329,7 +1325,7 @@ function cellEventMsg(cell,ev)
 	return	evMsg;
 }
 // ********************************************************************************************************************
-function loadThemeCSS(css,$widgetScope)
+function loadThemeCSS(css,vThis)
 {
 	// Load selected tabulator CSS file (currently global to the page)
 	const tbThemeCSS = "omriTabulatorDynamicThemeCSS";
@@ -1348,32 +1344,12 @@ function loadThemeCSS(css,$widgetScope)
 		el.innerText = css; //"border:3px solid #add8e6;";
 		el.id = tbThemeCSS;
 		document.head.appendChild(el);
-		console.log("Loaded CSS theme "+$widgetScope.props.themeFile);
+		console.log("Loaded CSS theme "+vThis.props.themeFile);
 	}
 	else
 		console.log("CSS theme already exists, ignoring");
 }
-// *********  Object Constructors  ****************************************************************
-function tbStyleMap()
-{
-	this.tblStyles = null; // Table defaults
-	this.hdrStyles = null; // Headers
-	this.rows	   = []; // Array of row objects, each with row style + field-specific styles
-}
-function tbStyleMapRow(rowId)
-{
-	this.rowId	   = rowId;
-	this.rowStyles = null;
-	this.cells 	   = {};
-}
-function tbEventMsg(ev)
-{
-	this.topic = "tbNotification";
-	this.event = ev;
-	this.payload = {};
-	this.notificationId = createUniqueId();
-}
-// *********  Utility functions  ****************************************************************
+// *********  Input validation functions  ****************************************************************
 function checkInputRowIds(rows,idField)
 {
 	// Checks that the rows (to be added/updated in the table) have valid Ids, with no duplicates
@@ -1403,11 +1379,12 @@ function checkInputRowIds(rows,idField)
 	return true;
 */
 }
-function checkAddedDupRows(rows,$widgetScope)
+//--------------------------------------------------
+function checkAddedDupRows(rows,vThis)
 {
 	// Checks if added rows do not have the same Id as existing rows (to avoid duplicate Ids)
-    const tblRows = $widgetScope.tbl.getRows();
-	const idField = $widgetScope.rowIdField;
+    const tblRows = vThis.tbl.getRows();
+	const idField = vThis.rowIdField;
 
 	for (let i = 0 ; i < rows.length ; i++)
 	{
@@ -1417,101 +1394,55 @@ function checkAddedDupRows(rows,$widgetScope)
 	return true;
 /*	
     rowComps.forEach(function(rowComp) {
-        let rowId = compRow.getCell($widgetScope.rowIdField).getValue());
+        let rowId = compRow.getCell(vThis.rowIdField).getValue());
 
 		if (data.findIndex((e)=> e[rowIdField] == rows[i][rowIdField]) >= 0)
 			return false;
 		
 	});
 
-	let data = $widgetScope.tbl.getData();
+	let data = vThis.tbl.getData();
 	for (let i = 0 ; i < rows.length ; i++)
 		if (data.findIndex((e)=> e[rowIdField] == rows[i][rowIdField]) >= 0)
 			return false;
 	return true;
 */
 }
+// ************************************************************************************************
+// Unscoped functions (no vThis)
+// ************************************************************************************************
+// Object Constructors 
+//---------------------------------------------------
+function tbStyleMap()
+{
+	this.tblStyles = null; // table defaults - apply to all table rows
+	this.hdrStyles = null; // header object, with column-specific styles
+	this.colStyles = null; // column-specific styles, which apply to the whole column
+	this.rows	   = [];   // array of row objects, each with row style + cell-specific styles
+}
+function tbStyleMapRow(rowId)
+{
+	this.rowId	   = rowId;
+	this.rowStyles = null;
+	this.cells 	   = {};
+}
+function tbEventMsg(ev)
+{
+	this.topic = "tbNotification";
+	this.event = ev;
+	this.payload = {};
+	this.notificationId = createUniqueId();
+}
 //-------------------------------------------------------------
 // Table function management
 //-------------------------------------------------------------
-class TblFunc {
-	// Static members
-	static prefix = /^@F:\s*/;  // e.g. @F:myFunctionName, or @F:(a,b)=>{return a+b}
-  
-  //parse sheet
-	// const splitRegex = /function\s+(\w+)\s*\(([^)]*)\)\s*\{([^}]*)\}/msg; --- does not support nested {}
-	static splitToFuncs = /function\s+/g ; //splits by the keyword 'function' (->the function body must not have another 'function' keyword inside it, not even as a comment)
-	static matchNamed = /\s*(\S+)\s*\(([^)]*)\)\s*([^]*)/;  // Generic regex with 3 matching groups, to extract name, params & body
-	static matchUnnamed = /^\(([^)]*)\)\s*=>([^]*)/;  // regex with 2 matching groups, to extract params & body of an inline function
+// tbParseFuncSheet() and tbFuncUtils() - are imported from common.js 
 
-	static pName = '[a-zA-Z_$][a-zA-Z0-9_$]*';  // JS function & param names can only have letters, digits, '$' and '_', and cannot start with a digit
-	static fName	  = new RegExp('^'+this.pName+'$'); 
-	static fParams = new RegExp(`^${this.pName}\\s*(,\\s*${this.pName}\\s*)*$|^\\s*$`); // zero or more params, comma-separated
-	static fBody = /^\{[^]*\}$/;  // checking if enclosed in curly brackets. Unable to check JS syntax validity
-	
-	static trimFuncTail(str)	{  //.replace(/([^]*})([^]*)/, '$1')
-		const index = str.lastIndexOf('}'); // Find the position of the last '}'
-        if (index !== -1) // If found, trim the remainder
-			return str.substring(0, index + 1);
-		else
-			return str;
-	}
-}
-function parseFuncSheet(str)
-{
-	if (!str)
-		return {};
-
-	const funcList = {};
-
-	//	first, split the sheet into separate function blocks
-	const rawFuncs = str.split(TblFunc.splitToFuncs);
-	for (let i = 0 ; i < rawFuncs.length ; i++)
-	{
-		if (rawFuncs[i].trim() !== '')
-		{
-			const func = TblFunc.trimFuncTail(rawFuncs[i]);  // trim out trailing text (e.g. comments) after the last '}'
-
-			const match = func.match(TblFunc.matchNamed) // extract name, params & body
-			if (match !== null)
-			{
-				const name   = match[1].trim();
-				const params = match[2].trim();
-				const body   = match[3].trim();
-
-				// test valididty
-				if (!TblFunc.fName.test(name))
-				{
-					console.warn("->Invalid function name:",name);
-					continue;
-				}
-				if (!TblFunc.fParams.test(params))
-				{
-					console.warn(`->Invalid function params: ${name} (${params})`);
-					continue;
-				}
-				if (!TblFunc.fBody.test(body))
-				{
-					console.warn(`->Invalid function body: ${name} (${params.replace(/[\s]/g,'')}) ${body}`);
-					continue;
-				}
-				let cleanParams = params.replace(/[\s]/g,'');
-				funcList[name] = {
-						params: cleanParams ? cleanParams.split(',') : [],
-						body: body
-					}
-			}
-			else 
-				console.warn("->Invalid function definition: "+func);
-		}
-    }
-    return funcList;
-}
 function parseFuncProperty(str,funcs)
 {
-	const func = str.replace(TblFunc.prefix,'').trim(); // strip off the prefix & surrounding whitespaces
+	const func = str.replace(tbFuncUtils.prefix,'').trim(); // strip off the prefix & surrounding whitespaces
 
-	if (TblFunc.fName.test(func))	// if function name only, lookup in predefined function list
+	if (tbFuncUtils.fName.test(func))	// if function name only, lookup in predefined function list
 	{
 		if (funcs.hasOwnProperty(func))
 			return funcs[func];
@@ -1519,7 +1450,7 @@ function parseFuncProperty(str,funcs)
 			return "Function not found";
 	}
 	
-	const match = func.match(TblFunc.matchUnnamed) // function is unnamed, extract params & body
+	const match = func.match(tbFuncUtils.matchUnnamed) // function is unnamed, extract params & body
 	if (match === null)
 		return "Invalid function definition";
 
@@ -1527,9 +1458,9 @@ function parseFuncProperty(str,funcs)
 	const body   = match[2].trim();
 
 	// test valididty
-	if (!TblFunc.fParams.test(params))
+	if (!tbFuncUtils.fParams.test(params))
 		return "Invalid function params "+params;
-	if (!TblFunc.fBody.test(body))
+	if (!tbFuncUtils.fBody.test(body))
 		return "Invalid function body "+body;
 
 	let cleanParams = params.replace(/[\s]/g,'');
@@ -1549,7 +1480,7 @@ function setFuncs(obj,funcs)
 		{
             if (typeof obj[i] === 'string')
 			{
-				if (TblFunc.prefix.test(obj[i]))
+				if (tbFuncUtils.prefix.test(obj[i]))
 				{
 					let funcDef = parseFuncProperty(obj[i],funcs)
 					if (typeof funcDef === "string") // error
@@ -1579,7 +1510,7 @@ function setFuncs(obj,funcs)
 		Object.keys(obj).forEach (key => {
 			if (typeof obj[key] === "string")
 			{
-				if (TblFunc.prefix.test(obj[key]))
+				if (tbFuncUtils.prefix.test(obj[key]))
 				{
 					let funcDef = parseFuncProperty(obj[key],funcs)
 					if (typeof funcDef === "string") // error
@@ -1608,10 +1539,8 @@ function setFuncs(obj,funcs)
 }	
 function hasInlineFuncs(obj)
 {
-	const matchRegex = /^@F:\s*\([^]*\)\s*=>/;
-
     if (typeof obj === 'string')
-        return matchRegex.test(obj);
+        return funcUtils.inlineFuncs.test(obj);
 	else if (Array.isArray(obj))
 		return obj.some(item => hasInlineFuncs(item));
 	else if (typeof obj === 'object' && obj !== null)
@@ -1652,29 +1581,8 @@ function cloneObj(obj)
 	Object.keys(obj).forEach (key => {
 		clonedObj[key] = cloneObj(obj[key]);
 	});
-	// for (let key in obj) {
-	//    if (obj.hasOwnProperty(key)) { -- not ot take inherited properties
-	//        clonedObj[key] = deepClone(obj[key]);
-	//    }
-
 	return clonedObj;
-/*
-	let clone = null;
-	try  {
-		clone = structuredClone(obj);
-		return clone;
-	}
-	catch (err)	{
-		try	{
-			clone = JSON.parse(JSON.stringify(obj));
-			return clone;
-		}
-		catch (err)	{
-			console.error("Object cloning failed:",err);
-		}
-	}
-	return null;
-*/
+
 	// 		return structuredClone(obj);
 	//		clone = loadsh.cloneDeep(obj);
 	//		clone = JSON.parse(JSON.stringify(obj));
@@ -1682,24 +1590,21 @@ function cloneObj(obj)
 }
 function createUniqueId()
 {
-	return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
-							(+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16));
+	let id = Math.random().toString(36);
+	id = id.replace(/^../,"ev");
+    while (id.length < 16)
+    {
+        let pad = "" + Date.now(); //timestamp, 13 chars
+        id += pad.slice(-(16-id.length));
+    }
+    return id;
+	
+//	return "10000000-1000-4000-8000-100000000000".replace(/[018]/g, c =>
+//							(+c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> +c / 4).toString(16));
 }
 function debugLog(t1,t2,t3,t4)
 {
 	if (window.tbPrintToLog)
 		console.log("ui-tabulator:",t1, t2||"", t3||"", t4||"");
 }
-// *******************************************************************************************************************************
 </script>
-<style>
-@import  "../../node_modules/tabulator-tables/dist/css/tabulator.min.css"
-</style>
-
-<style scoped>
-/* CSS is auto scoped, but using named classes is still recommended */
-.ui-tabulator-wrapper {
-}
-.ui-tabulator-class {
-}
-</style>

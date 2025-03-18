@@ -1,11 +1,12 @@
 module.exports = function (RED) {
-	const fs = require('fs');
-
+	//console.log("Current directory:", __dirname);
+	const {parseFuncSheet,testImport} = require(__dirname+'/common.js');
+	//testImport();
+	
     function UITabulatorNode (config) {
         RED.nodes.createNode(this, config)
 
         const node = this;
-		const dsDummyImage = {ds:"Dummy"};
 
 		// Set debug log policy
 		const e = process.env.TBDEBUG;
@@ -14,35 +15,64 @@ module.exports = function (RED) {
 
 		debugLog("Creating ui-tabulator server node, id="+node.id);
 
-		// Saving last msg id's to allow filtering duplicate messages (from concurrent open clients)
 		node.multiUser = config.multiUser;
+		// create maps for incoming msg id's, to allow duplicate of messages (from concurrent open clients)
 		if (!node.multiUser)
 		{
-			node.lastMsgs		= new Map();
-			node.lastClientMsgs	= new Map();
+			node.lastMsgs		= new Map();	// response messages from the widget, going to the node output
+			node.lastClientMsgs	= new Map();	// internal client update notifications 
 		}
 		
         // which group are we rendering this widget
         const group = RED.nodes.getNode(config.group);
         const base = group.getBase();
 
-        // server-side event handlers
+		// *************************************************
+        // server-side msg listeners
+		// *************************************************
         const evts = {
             onAction: true,
-            onInput: function (msg, send, done) {  // the *input* message coming into the server node input port
+			 
+			//-------------------------------------------------------------------------
+			// input message coming from the server node input port
+			// note: Node-red automatically sends every input message to the dashboard.
+			// if it's a server-node command, the table widget will know to ignore it
+			//-------------------------------------------------------------------------
+            onInput: function (msg, send, done) {
 				debugLog('onInput: '+node.id,msg);
-
-				// check if there are connected clients
+				
+				let dsImage = null;
 				const conns = base.uiShared?.connections;
-				const connCount = typeof conns === "object" && conns != null ? Object.keys(conns).length : 0;
-				if (msg.tbCmd === "tbGetClientCount")
+				const connCount = (typeof conns === "object" && conns != null) ? Object.keys(conns).length : 0;
+				
+				// server-node commands
+				//---------------------
+				switch (msg.tbCmd)
 				{
-					msg.payload = connCount;
-					node.send(msg);
+					case "tbShowDatastore":
+						dsImage = base.stores.data.get(node.id);
+						if (!msg.tbOutput || msg.tbOutput?.toLowerCase() === "log")
+							console.log("Datastore image for node "+node.id+":",dsImage);
+						if (!msg.tbOutput || msg.tbOutput?.toLowerCase() === "msg")
+							node.send({payload:dsImage});
+						return;
+					case "tbGetDsData":
+						dsImage = base.stores.data.get(node.id);
+						node.send({payload:dsImage.data || "No Data"});
+						return;
+					case "tbGetDsDataCount":
+						dsImage = base.stores.data.get(node.id);
+						node.send({payload:dsImage?.data?.length});
+						return;
+					case "tbGetClientCount":
+						msg.payload = connCount;
+						node.send(msg);
+						return;
 				}
-				else if (connCount === 0)
+				// if msg was not a server-node command, but there are no connected clients to receive it, send a warning
+				if (connCount === 0)
 				{
-					const errMsg = "No connected clients - message to ui-tabulator ignored";
+					const errMsg = "No connected clients - message to ui-tabulator will be ignored";
 					debugLog(errMsg);
 					if (!msg.tbDoNotReply)
 					{
@@ -50,26 +80,28 @@ module.exports = function (RED) {
 						node.send(msg);
 					}
 				}
-
-                // forward it as-is to any connected nodes in Node-RED  - ** deprecated  feature **
-                //if (config.passthru)
-				//	send(msg);
             },
+			//-------------------------------------------------------------------------
+			// messages sent  from the dashboard widget to a named server-node listener
+			// handler function arguments: conn = socketId, id = node.id, msg
+			//-------------------------------------------------------------------------
+            onSocket: {
 
-            onSocket: {	// Function arguments: conn = socketId, id = node.id
 				//-------------------------------------------------------------------------------------------------
 				//'widget-action': function  (conn, id, msg) {
-				//	if (id === node.id && msg.topic === "tbNotification")
-				//		console.log("'widget action' msg:",msg)
+					// the standard msg handler.
+					// here it is commented-out, hence messages sent to 'widget-action' are automatically forwarded as-is to output.
+					//console.log("widget-action msg:",msg);
                 //},
 
-				// *******************************************************************************************************************************
-				// Generic response sender. filters duplicate messages (from multiple open clients, in shared mode), and sends through output port
-				// *******************************************************************************************************************************
+				// **********************************************************************************************************************************
+				// custom listeners for widget responses to commands.
+				// in shared mode, identical messages (from concurrent open clients) are being de-duplicated by msg Id, and only one msg is processed
+				// **********************************************************************************************************************************
                 
-				//['tbSendMessage'+node.id]: function (conn, id, msg) { // listener per ui-tabulator node instance
-                'tbSendMessage': function (conn, id, msg) {
-					if (id !== node.id) // single listener for all ui-tabulator nodes (less impact on socket)
+				//['tbSendMessage'+node.id]: function (conn, id, msg) {		// listener per ui-tabulator node instance
+                'tbSendMessage': function (conn, id, msg) {					// single listener for all ui-tabulator instances (less impact on socket)
+					if (id !== node.id) 					
 						return;
 										
 					// Reponses to commands
@@ -82,77 +114,73 @@ module.exports = function (RED) {
 							node.send(msg);
 							return;
 						default: 
-							//console.log("command response",msg)
+							//console.log("command response:",msg)
 							if (node.multiUser || !inMap(node.lastMsgs,msg._msgid, msg._client || ""))
 								node.send(msg);
 							return;
 					}
                 },
-
-				// *******************************************************************************************************************************
-				// Internal commands from the clients
-				// *******************************************************************************************************************************
-
+				// Internal client-server update commands
+				//---------------------------------------
                 //['tbClientCommands'+node.id]: function (conn, id, msg) {	// listener per ui-tabulator node instance
-                'tbClientCommands': function (conn, id, msg) {				// single listener for all ui-tabulator nodes (less impact on socket) 
+                'tbClientCommands': function (conn, id, msg) {				// single listener for all ui-tabulator instances (less impact on socket) 
 					if (id !== node.id)
 						return;
 
 					//console.log("internal client command",msg)
 					switch (msg.tbClientCmd)
 					{
-						// Notification from a table (when in shared mode) about an in-cell user edit.
-						// Since this is a user-originated change (on a single client), it needs to be distributed to all other clients
+						// Notification from a table (sent only when in shared mode) about an in-cell user edit.
+						// Since this is a user-originated change (received from a single client), it needs to be distributed to all other clients
 						//---------------------------------------------------------------------
 						case 'tbCellEditSync':
 							debugLog("Received 'cellEdited' notification");
-
 							// Update datastore
-							if (!node.multiUser)
-							{
-								debugLog("Saving to datastore: node.id="+node.id,msg);
-								base.stores.data.clear(node.id);
-								base.stores.data.save(base, node, msg.dsImage);
-							}
+							debugLog("Saving to datastore: node.id="+node.id,msg);
+							const existingImage = base.stores.data.get(node.id);
+							existingImage.timestamp   = msg.payload.timestamp;
+							existingImage.clientMsgId = msg.notificationId;
+							const row = existingImage.data.find(element => element[msg.payload.idField] == msg.payload.rowId)
+							if (row)
+								row[msg.payload.field] = msg.payload.value;
+							else
+								console.error("Datastore cellEditSync error - row "+msg.payload.rowId+" not found")
+							
+							base.stores.data.clear(node.id);
+							base.stores.data.save(base, node, existingImage);
 
 							// update the other client widgets
 							debugLog("Sending to other clients");
-							delete msg.dsImage;
+							msg.tbCmd = "tbCellEditSync";
 							delete msg.topic; // remove 'tbNotification' to avoid confusion
 							msg.tbClientScope = "tbNotSameClient";	// skip originator, update only the other clients
 							broadcastToClients(msg);
 							break;
 
-						// Datastore commands
+						// save to datastore (sent in shared mode only)
 						//---------------------------------------------------------------------
 						case 'tbSaveToDatastore':
 							if (!node.multiUser && !inMap(node.lastClientMsgs,msg.clientMsgId,""))
 							{
 								const dsImage = msg.payload;
 								debugLog(`Saving to datastore: node.id=${node.id}, clientMsgId: ${dsImage.clientMsgId}`);
-								debugLog("exists:",dsImage.exists);
-								debugLog("config:", dsImage.config);
-								debugLog("data:", dsImage.data ? dsImage.data.length+' rows' : null);
-
+								debugLog(dsImage);
+								
+								if (!dsImage.hasOwnProperty("config") || !dsImage.hasOwnProperty("funcs") || !dsImage.hasOwnProperty("data") || !dsImage.hasOwnProperty("styleMap"))
+								{
+									// when dsImage has only selective fields, retrieve & update the existing image
+									const existingImage = base.stores.data.get(node.id);
+									if (!dsImage.hasOwnProperty("config"))
+										dsImage.config = existingImage.config;
+									if (!dsImage.hasOwnProperty("funcs"))
+										dsImage.funcs = existingImage.funcs;
+									if (!dsImage.hasOwnProperty("data"))
+										dsImage.data = existingImage.data;
+									if (!dsImage.hasOwnProperty("styleMap"))
+										dsImage.styleMap = existingImage.styleMap;
+								}
 								base.stores.data.clear(node.id);
 								base.stores.data.save(base, node, dsImage);
-							}
-							break;
-						case 'tbShowDatastore':		// for testing
-							if (!node.multiUser && !inMap(node.lastClientMsgs,msg.clientMsgId,""))
-							{
-								let data = base.stores.data.get(id) || "<none>";
-								console.log("Datastore image for node "+node.id+":",data);
-								if (msg.sendMsg)
-									node.send({payload:data});
-							}
-							break;
-						case 'tbClearDatastore':
-							if (!node.multiUser && !inMap(node.lastClientMsgs,msg.clientMsgId,""))
-							{
-								debugLog("Setting dummy to datastore: node.id="+node.id);
-								base.stores.data.clear(node.id);
-								base.stores.data.save(base, node, dsDummyImage);
 							}
 							break;
 
@@ -170,10 +198,45 @@ module.exports = function (RED) {
 		//Initialize Datastore
 		//--------------------------------------------------------
 		base.stores.data.clear(node.id);
+		if (node.multiUser)
+			// for backwards compatibility with older dashboard versions - sets a dummy object in the data store to ensure 'widget-load' notification
+			base.stores.data.save(base, node, {ds:"<Empty>"});
+		else
+		{
+			const dsImage = {
+				timestamp:Date.now(),
+				clientMsgId:"",
+				config:null,
+				funcs:null,
+				data:null,
+				styleMap: null
+			}
 
-		// Set a "dummy" object in the data store to ensure 'widget-load' notification (update: NR bug has been fixed, will discard this in the future)
-		if (!node.multiUser)
-			base.stores.data.save(base, node, dsDummyImage);
+			if (config.initObj?.trim())
+			{
+				try  {
+					const initObj = JSON.parse(config.initObj);
+					// successful parsing
+					if (Object.keys(initObj).length > 0)
+					{
+						if (initObj.data)
+						{
+							dsImage.data = initObj.data;
+							delete initObj.data;
+						}
+						else
+							dsImage.data = [];
+						dsImage.config = initObj;
+					}
+				} catch (err) {
+					console.error("Invalid table configuration: ",err);
+				}
+			}
+			dsImage.funcs = parseFuncSheet(config.funcs);  // parsing func taken from 'common' import
+
+			//console.log("initial DS Image",dsImage);
+			base.stores.data.save(base, node, dsImage);
+		}
 
 		//--------------------------------------------------------
 		// inform the dashboard UI that we are adding this node
@@ -187,76 +250,35 @@ module.exports = function (RED) {
 		// read theme CSS file, if configured
 		//--------------------------------------------------------
 		config.themeCSS = "";
-		let themeFile = config.themeFile.trim();
-		if (themeFile)
+		let filename = config.themeFile?.trim();
+		if (filename)
 		{
-			const urlPrefix = "@URL:";
-			const cssPrefix = "@CSS:"
-			if (themeFile.match(new RegExp('^@URL:','i')) !== null)  // URL
+			const urlRegex = new RegExp('^@URL:','i');
+			if (urlRegex.test(filename))  // deprecated: fetch from URL
+				console.error("Fetching CSS file from a URL is now deprecated");
+			else
 			{
-				const fileURL = themeFile.slice(urlPrefix.length);
-				debugLog("Fetching file from URL",fileURL);
-				let fetchOK = false;
-				fetch(fileURL)
-					.then((response) => {
-						if (response.ok)
-							fetchOK = true;
-						return response.text()
-					})
-					.then(text => {
-						if (fetchOK)
-						{
-							config.themeCSS = text;
-							console.log("ui-tabulator: CSS file fetched successfully, length=",data.length);
-						}
-						else
-							console.error("Error fetching CSS file:",text);
-					})
-					.catch(err => {
-						console.error('Error fetching CSS file:', err);
-					});
-			}
-			else	// File
-			{
+				const fs = require('fs');
+				const cssPrefix = "@CSS:";
+				const cssRegex = new RegExp('^'+cssPrefix,'i');
+				if (cssRegex.test(filename))	// take from tabulator CSS directory
+				{
+					// __dirname = location of this file = <NR home dir>/node_modules/@omrid01/node-red-dashboard-2-table-tabulator/nodes
+					// Tabulator CSS dir = <NR home dir>/node_modules/tabulator-tables/dist/css
+					
+					const cssDir =  __dirname + "/../../../tabulator-tables/dist/css/";
+					filename = cssDir + filename.slice(cssPrefix.length);
+				}
 				try	{
-					if (themeFile.match(new RegExp('^@CSS:','i')) !== null)  // take CSS file from Tabulator dist
-					{
-						// __dirname = location of this (executing) file , in this case = C:\Node-red\Dsh2\node-red-ui-tabulator\nodes
-						// Tabulator CSS files are in C:/Node-red/Dsh2/node-red-ui-tabulator/node_modules/tabulator-tables/dist/css/
-						// For example: tabulator_midnight.min.css, tabulator_modern.min.css etc.
-						
-						// check in internal directory
-						let cssDir =  __dirname + "/../node_modules/tabulator-tables/dist/css/";
-						if (fs.existsSync(cssDir))
-						{
-							debugLog("Found local CSS directory "+cssDir);
-							themeFile = cssDir + themeFile.slice(cssPrefix.length);
-						}
-						else
-						{
-							// check in Node-red packages
-							cssDir =  __dirname + "/../../../tabulator-tables/dist/css/";
-							if (fs.existsSync(cssDir))
-							{
-								debugLog("Found CSS directory in Node-red node-modules");
-								themeFile = cssDir + themeFile.slice(cssPrefix.length);
-							}
-							else
-								console.error("Cannot find CSS directory");
-						}
-					}
-					// else use file name as-is
-
-					debugLog("Reading CSS file", themeFile);
-					let data = fs.readFileSync(themeFile,"utf8");
-					config.themeCSS = data;
-					console.log("ui-tabulator: CSS file read successfully, length=",data.length);
+					config.themeCSS = fs.readFileSync(filename,"utf8");
+					console.log("ui-tabulator: CSS file read successfully, length=",config.themeCSS.length);
 				}
 				catch (err)	{
 					console.error("Cannot read CSS file: ",err);
 				}
 			}
 		}
+
 		//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 		// Temp workaround - forcing browser 'reload' command to all clients due to NR socket bug
 		//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -264,18 +286,21 @@ module.exports = function (RED) {
 			debugLog("Sending reload command to clients");
 			broadcastToClients({tbCmd:"tbReloadClient"});
 		}, 2000);
-		//--------------------------------------------------------
+		//^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+		//----------------------------------------------------------------------------
 		function broadcastToClients(msg)
 		{
 			debugLog(""+node.id+": broadcasting:",msg);
 			base.emit('tbServerEvent:'+node.id, msg, node);
 		}
+		//----------------------------------------------------------------------------
 		function debugLog(t1,t2,t3,t4)
 		{
 			if (printToLog)
 				console.log("ui-tabulator:",t1, t2||"", t3||"", t4||"");
 		}
-}
+		//----------------------------------------------------------------------------
+	}
     RED.nodes.registerType('ui-tabulator', UITabulatorNode)
 }
 //---------------------------------------------------------------------------------
