@@ -1,5 +1,9 @@
 # ui-tabulator Latest Releases
 
+## v0.7.1, 26-Mar-2025
+
+* Bug-fix: typo in function name (causing runtime error), affecting commands such as setData, replaceData etc.
+
 ## v0.7.0, 18-Mar-2025
 
 * Added a new framework, supporting _server-node_ commands (commands handled by the server node, available even when there are no open clients). Current supported commands:

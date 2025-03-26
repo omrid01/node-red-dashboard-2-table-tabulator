@@ -1540,7 +1540,7 @@ function setFuncs(obj,funcs)
 function hasInlineFuncs(obj)
 {
     if (typeof obj === 'string')
-        return funcUtils.inlineFuncs.test(obj);
+        return tbFuncUtils.inlineFuncs.test(obj);
 	else if (Array.isArray(obj))
 		return obj.some(item => hasInlineFuncs(item));
 	else if (typeof obj === 'object' && obj !== null)
