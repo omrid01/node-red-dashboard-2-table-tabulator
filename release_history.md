@@ -1,4 +1,9 @@
-# ui-tabulator Latest Releases
+# ui-tabulator Release History
+
+## v0.7.2, 17-May-2025
+
+* Introducing a new property **tbName** in all output messages, with the configured node name (or, if name is not configured, the node Id). This enables to identify the sending table in case of multiple table nodes.
+* In notification messages, moved the **tbNotification** descriptor from **msg.topic** to a new property **msg.msgType**. This comes to work around a dashboard bug (introduced in v2.3.0) which overrides **msg.topic** and sets it to **undefined** (dashboard issue #1683).
 
 ## v0.7.1, 26-Mar-2025
 

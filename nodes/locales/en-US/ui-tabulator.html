@@ -8,16 +8,17 @@ Enables to present, update &amp; query tables on the dashboard UI, using the pop
     <dd>The command sent to the node. Can invoke a Tabulator API (for setting/getting data or changing appearance) or additional functions.</dd>
     <dt class="optional">tbArgs <span class="property-type">array</span></dt>
     <dd>Generic container of input arguments for 'Tabulator API' commands, structured as an array of arguments.</dd>
-	<p><br> Other commands may have their own specific arguments.The full list of supported commands and input arguments (with details &amp; examples), is detailed in the <i><b>Commands</b></i> section below.</p>
+	<p><br>Some commands may have their own specific arguments.The full list of supported commands and input arguments (with details &amp; examples), is described in the <i><b>Commands</b></i> section below.</p>
 </dl>
 <h3>Outputs</h3>
 <dl class="message-properties">
+    <dt>tbName <span class="property-type">string</span></dt>
+    <dd>The name of the table, as configured in the node configuration. If there is no configured name, it will be the node Id.</dd>
     <dt class="optional">payload <span class="property-type">various</span></dt>
     <dd>The data returned from the table. If the table does not return any data, the original <code>msg.payload</code> remains unchanged</dd>
     <dt class="optional">error <span class="property-type">string</span></dt>
     <dd>Optional property, indicating command failure, with the respective error message</dd>
-    <dt class="optional">topic <span class="property-type">string</span></dt>
-    <dd>Optional property. The value <i><b>'tbNotification'</b></i>, indicates an unsolicited message triggered by a table event (with <code>msg.event</code> indicating the event type, and <code>msg.payload</code> containing the related event information)</dd>
+	<p><br> In case of table notifications, the message will include additional properties (described in the <i><b>Table Notifications</b></i> section below).</p>
 </dl>
 <h3>Node Configuration</h3>
 <dl class="message-properties">
@@ -145,7 +146,7 @@ If you use the regular Tabulator commands (e.g. <code>getData</code>) you might 
 </ul>
 
 <h3>Commands</h3>
-<p>The commands sent <code>ui-tabulator</code> are divided into 3 types:
+<p>The commands sent to <code>ui-tabulator</code> are divided into 3 types:
 <ul>
  <li><b>Tabulator API commands</b> - directly mapped to Tabulator APIs</li>
  <li><b>Widget commands</b> - handled within in the dashboard widget, and apply additional processing/parsing around the Tabulator API calls</li>
@@ -303,10 +304,21 @@ msg.tbGroupHeader = "$field=$value, ($count items)"</code></pre>
 </ul>
 
 <h3>Table Notifications</h3>
-<p>In addition to responding to commands, the node can send unsolicited notifications on selected table events, defined in the <code>Notifications</code> configuration property. The outgoing notifications will have <code>msg.topic</code> set to <i><b>'tbNotification'</b></i>, <code>msg.event</code> with the event type and <code>msg.payload</code> with the event data.</p>
+<p>In addition to responding to commands, the node can send unsolicited notifications on selected table events (defined in the <code>Notifications</code> configuration property). The notifications include the following properties:
+ <dl class="message-properties">
+    <dt>msgType <span class="property-type">string</span></dt>
+    <dd>Will always be <code>tbNotification</code>.</dd>
+    <dt>event <span class="property-type">string</span></dt>
+    <dd>The table event which triggered the notification.</dd>
+    <dt>payload <span class="property-type">object</span></dt>
+    <dd>The event data.</dd>
+    <dt>notificationId <span class="property-type">string</span></dt>
+    <dd>Unique notification identifier.</dd>
+</dl>
 For example:
 <pre><code>{
-   topic: "tbNotification",
+   tbName: "table-1",
+   msgType: "tbNotification",
    event: "cellEdited",
    payload: {
       id: 2,
@@ -314,7 +326,7 @@ For example:
       newValue: "Jack Brown",
       oldValue: "John Doe"
    },
-   notificationId: "4a1a59ca-ca8f-45a5-ae30-aa72fe06e5c5",
+   notificationId: "evh7mmci9v4zd622",
    _client: {
       socketId: "uXRxjY9yO-Hya1vtAAAB"
     },

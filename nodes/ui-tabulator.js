@@ -34,7 +34,7 @@ module.exports = function (RED) {
             onAction: true,
 			 
 			//-------------------------------------------------------------------------
-			// input message coming from the server node input port
+			// input messages coming from the server node input port
 			// note: Node-red automatically sends every input message to the dashboard.
 			// if it's a server-node command, the table widget will know to ignore it
 			//-------------------------------------------------------------------------
@@ -81,19 +81,25 @@ module.exports = function (RED) {
 					}
 				}
             },
-			//-------------------------------------------------------------------------
-			// messages sent  from the dashboard widget to a named server-node listener
+			//--------------------------------------------------------------------------------
+			// Listener object with named handlers for messages sent from the dashboard widget
 			// handler function arguments: conn = socketId, id = node.id, msg
-			//-------------------------------------------------------------------------
-            onSocket: {
+			//--------------------------------------------------------------------------------
+			onSocket: {
 
-				//-------------------------------------------------------------------------------------------------
-				//'widget-action': function  (conn, id, msg) {
-					// the standard msg handler.
-					// here it is commented-out, hence messages sent to 'widget-action' are automatically forwarded as-is to output.
-					//console.log("widget-action msg:",msg);
-                //},
-
+				// **********************************************************************************************************************************
+				// standar handler for widget messages.
+				// the message is automatically sent as-is (by the NR framework) to the node output, regardless of what we do in the listener
+				// hence it is used for debugging, and commented-out by default
+				// **********************************************************************************************************************************
+				/*
+				'widget-action': function  (conn, id, msg) {
+					if (id !== node.id) 					
+						return;
+					console.log("widget-action msg:",msg);
+				},
+				*/
+				
 				// **********************************************************************************************************************************
 				// custom listeners for widget responses to commands.
 				// in shared mode, identical messages (from concurrent open clients) are being de-duplicated by msg Id, and only one msg is processed
@@ -152,7 +158,6 @@ module.exports = function (RED) {
 							// update the other client widgets
 							debugLog("Sending to other clients");
 							msg.tbCmd = "tbCellEditSync";
-							delete msg.topic; // remove 'tbNotification' to avoid confusion
 							msg.tbClientScope = "tbNotSameClient";	// skip originator, update only the other clients
 							broadcastToClients(msg);
 							break;

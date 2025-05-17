@@ -41,6 +41,7 @@ export default {
 			tbl: 		 	null,	// reference to the table object
 			tblReady:	 	false,	// Indicates that table has completed initializing
 			tblDivId:		"",		// Optional, allows table instantiation on a specified Div
+			tblName:		"",		// Table alias, either the node name (if defined) else node id
 			rowIdField:		"id",	// The name of the field which holds the unique row Id (the default is 'id', but can be overridden)
 
 			origTblConfig:	null,	// original table configuration, as configured in the node (converted from JSON to an object). null=no table config in the node
@@ -58,9 +59,10 @@ export default {
 		//tbTestImport.sayHello(); // test that 'common.js' was imported successfully
 	
 		const vThis = this; // Save the Vue 'this' scope for socket listener, callbacks, external functions etc.
+		this.tblName = this.props.name || this.id;  // set the table alias
 		
 		window.tbPrintToLog = this.props.printToLog;
-		debugLog(`***ui-tabulator node ${this.id} mounted on client ${this.$socket.id}, debug=${window.tbPrintToLog?"on":"off"}`);
+		debugLog(`***ui-tabulator node ${this.tblName} mounted on client ${this.$socket.id}, debug=${window.tbPrintToLog?"on":"off"}`);
 
 		// parse the original table configuration & funcs (from node configuration)
 		const cfgStr = this.props.initObj?.trim();
@@ -74,7 +76,7 @@ export default {
 			}
 			catch (err) {
 				cfg = null;
-				console.error(this.id+": Invalid table configuration:",err);
+				console.error("Table "+vThis.tblName+": Invalid table configuration:",err);
 			}
 		}
 		this.origTblFuncs = tbParseFuncSheet(this.props.funcs);
@@ -116,7 +118,7 @@ export default {
 			//-------------------------------------------------------------------------------------------------------
 			if (msg?.tbCmd === "tbReloadClient")
 			{
-				console.log(vThis.id+": Received reload request");
+				console.log("Table "+vThis.tblName+": Received reload request");
 
 				// setTimeout(()=>location.reload(),5000);
 				location.reload();
@@ -133,7 +135,7 @@ export default {
 		// msg listener for 'widget-load' event, sent from server when widget is loaded (with datastore image)
 		// ***************************************************************************************************
 		this.$socket.on('widget-load:' + this.id, (msg) => {
-			debugLog(vThis.id+" Loaded DS image:",msg);
+			debugLog("Table "+vThis.tblName+" Loaded DS image:",msg);
 			initialTableLoad(msg,this)
         })
     },
@@ -151,9 +153,11 @@ export default {
         //  widget-action just sends a msg to Node-RED, it does not store the msg state server-side
         //  alternatively, you can use widget-change, which will also stores the msg in the Node's datastore
 		sendNotification(msg) {
+			msg.tbName = this.tblName;
 			this.$socket.emit('widget-action', this.id, msg) // Using the "standard" send for notifications
         },
 		send(msg) {
+			msg.tbName = this.tblName;
 			if (!msg.tbDoNotReply)
 			{
 				if (this.props.multiUser)
@@ -266,7 +270,7 @@ function processMsg(msg,vThis)
 // Table creation & deletion commands
 //------------------------------------------------------------------
 		case "tbCreateTable":
-			debugLog(vThis.id+": creating table from msg");
+			debugLog("Table "+vThis.tblName+": creating table from msg");
 			if (!msg.tbInitObj)
 			{
 				msg.error = "Invalid table configuration";
@@ -305,7 +309,7 @@ function processMsg(msg,vThis)
 			vThis.send(msg);
 			return; 
 		case "tbResetTable":
-			debugLog(vThis.id+": reloading table from node configuration");
+			debugLog("Table "+vThis.tblName+": reloading table from node configuration");
 
 			createTable(vThis.origTblConfig,vThis.origTblFuncs,null,vThis)
             .then((val)=>{
@@ -325,7 +329,7 @@ function processMsg(msg,vThis)
 // internal synchronization commands
 //------------------------------------------------------------------
 		case "tbCellEditSync":	// internal sync command received when a cell is edited (from UI) in another client
-			debugLog(vThis.id+": received cell edit sync");
+			debugLog("Table "+vThis.tblName+": received cell edit sync");
 			cellEditSync(msg,vThis);
 			return; 
 //------------------------------------------------------------------
@@ -392,7 +396,7 @@ function processMsg(msg,vThis)
 			return; 
 		case "tbClearStyles":
 			// reload table (with its current configuration), dropping all styles
-			debugLog(vThis.id+": clearing styles, reloading table with current config & data");
+			debugLog("Table "+vThis.tblName+": clearing styles, reloading table with current config & data");
 			const cfg = cloneObj(vThis.activeTblConfig);
 			const data = vThis.tbl.getData();
 			cfg.data = data;
@@ -730,13 +734,13 @@ return new Promise((resolve, reject) => {
 				vThis.tblStyleMap = null;
 
 			vThis.tblReady = true;
-			console.log(vThis.id+": Table built and ready");
+			console.log("Table "+ vThis.tblName + " built and ready");
             resolve("Table built and ready");
 		});  // on TableBuilt
 	}
 	catch (err)
 	{
-		console.error(vThis.id+": Table creation failed",err);
+		console.error("Table "+vThis.tblName+": Table creation failed",err);
 		destroyTable(vThis);
 		reject("Table creation failed");
 	}	
@@ -754,7 +758,7 @@ function destroyTable(vThis)
 	{
 		vThis.tbl.clearData();
 		vThis.tbl.destroy();
-		console.log(vThis.id+": Table destroyed");
+		console.log("Table "+vThis.tblName+": Table destroyed");
 	}
 	vThis.tbl = null;
 	vThis.tblReady = false;
@@ -771,13 +775,13 @@ function initialTableLoad(dsImage,vThis)
 	{
 		if (vThis.origTblConfig)
 		{
-			console.log(vThis.id+": Creating table from node configuration");
+			console.log("Table "+vThis.tblName+": Creating table from node configuration");
 			createTable(vThis.origTblConfig,vThis.origTblFuncs,null,vThis)
 			    .then((result) => {}) //{console.log("tbl init success, result=",result)})
 				.catch((error) => {}) //{console.error("tbl init error, err=",error)});
 		}
 		else
-			console.log(vThis.id+": No table configuration, table not created.");
+			console.log("Table "+vThis.tblName+": No table configuration, table not created.");
 		return;
 	}
 	
@@ -785,12 +789,12 @@ function initialTableLoad(dsImage,vThis)
 	//------------------------------------
 	if (!dsImage.config)  // stored image = 'no table'
 	{
-		console.log(vThis.id+": No table configuration in datastore, table not created.");
+		console.log("Table "+vThis.tblName+": No configuration in datastore, table not created.");
 		return;
 	}
 	
 	// image has table definition
-	console.log(vThis.id+": Creating table from datastore image");
+	console.log("Table "+vThis.tblName+": Creating table from datastore image");
 	const initObj = dsImage.config;
 	if (dsImage.data)
 		initObj.data = dsImage.data;
@@ -1157,7 +1161,7 @@ function cellEditSync(msg,vThis)
 	vThis.tbl.updateData([data])
 		.then((resolveVal)=>{ debugLog("Updated cell. resolve value=",resolveVal)})
 		.catch((err)=>{
-			console.error(vThis.id+": Cell-edit sync failed:",err.message)
+			console.error("Table "+vThis.tblName+": Cell-edit sync failed:",err.message)
 		});
 	// Not sending a response msg to the flow, since this is an internal sync message
 }
@@ -1301,7 +1305,7 @@ function setEventNotifications(vThis)
 				console.error("Event '"+ev+"' is not defined or unsupported");
 				continue;
 		}
-		debugLog(vThis.id+": Set '"+ev+"' notifications");
+		debugLog("Table "+vThis.tblName+": Set '"+ev+"' notifications");
 	}
 }
 function rowEventMsg(row,ev)
@@ -1428,7 +1432,8 @@ function tbStyleMapRow(rowId)
 }
 function tbEventMsg(ev)
 {
-	this.topic = "tbNotification";
+	// "tbNotification" will be set in this.msgType instead of this.topic, to work around a dashboard bug - as of v2.3.0 'msg.topic' is being overwritten to 'undefined' (issue #1683).
+	this.msgType = "tbNotification";
 	this.event = ev;
 	this.payload = {};
 	this.notificationId = createUniqueId();
