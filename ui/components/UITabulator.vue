@@ -136,7 +136,7 @@ export default {
 		// ***************************************************************************************************
 		this.$socket.on('widget-load:' + this.id, (msg) => {
 			debugLog("Table "+vThis.tblName+" Loaded DS image:",msg);
-			initialTableLoad(msg,this)
+			initialTableLoad(msg.tblImage,this)
         })
     },
 // ******************************************************************************************************************************************
@@ -150,50 +150,20 @@ export default {
     },
 // ******************************************************************************************************************************************
     methods: {
-        //  widget-action just sends a msg to Node-RED, it does not store the msg state server-side
-        //  alternatively, you can use widget-change, which will also stores the msg in the Node's datastore
+        //  widget-send just sends a msg to Node-RED, it does not store the msg state server-side
+        //  alternatively, you can use widget-change, which will also automatically store the msg in the Node's datastore
 		sendNotification(msg) {
 			msg.tbName = this.tblName;
-			this.$socket.emit('widget-action', this.id, msg) // Using the "standard" send for notifications
+			//this.$socket.emit('widget-send', this.id, msg)
+			this.$socket.emit('widget-action', this.id, msg)
         },
-		send(msg) {
-			msg.tbName = this.tblName;
-			if (!msg.tbDoNotReply)
+		sendResponse(msg) {
+			if (!msg.tbDoNotReply || (!this.props.multiUser && msg.hasOwnProperty("dsImage")))
 			{
-				if (this.props.multiUser)
-					this.$socket.emit('widget-action', this.id, msg) // Use the "standard" send for notifications
-				else
-					this.$socket.emit('tbSendMessage'/*+this.id*/, this.id, msg) // send the message as a custom event, lets the server de-duplicate identical responses from concurrent clients
-
+				msg.tbName = this.tblName;
+				this.$socket.emit('widget-action', this.id, msg)
 			}
-        },
-		sendClientCommand(cmd,msg) {
-            msg.tbClientCmd = cmd;
-            this.$socket.emit('tbClientCommands'/*+this.id*/, this.id, msg)
-        },
-		saveToDatastore(config,funcs,data,styleMap,clientMsgId)	{
-			let dsMsg = {
-				tbClientCmd: 'tbSaveToDatastore',
-				clientMsgId: clientMsgId,
-				payload: {
-					timestamp: Date.now(),
-					clientMsgId: clientMsgId
-				}
-			};
-			if (config !== undefined)
-				dsMsg.payload.config = config;
-			if (funcs !== undefined)
-				dsMsg.payload.funcs = funcs;
-			if (data !== undefined)
-				dsMsg.payload.data = data;
-			if (styleMap !== undefined)
-				dsMsg.payload.styleMap = styleMap;
-
-            this.$socket.emit('tbClientCommands'/*+this.id*/, this.id, dsMsg)
- 		},
-		clearDatastore(clientMsgId)	{
-			this.saveToDatastore(null,null,null,null,clientMsgId);
-		}
+        }
 	}
 // ******************************************************************************************************************************************
 }  // end of export default
@@ -274,13 +244,13 @@ function processMsg(msg,vThis)
 			if (!msg.tbInitObj)
 			{
 				msg.error = "Invalid table configuration";
-				vThis.send(msg);
+				vThis.sendResponse(msg);
 				return;
 			}
 			if (!vThis.props.allowMsgFuncs && (!!msg.tbFuncs || hasInlineFuncs(msg.tbInitObj)))
 			{
 				msg.error = "Messages with function definitions are blocked in the node configuration";
-				vThis.send(msg);
+				vThis.sendResponse(msg);
 				return;
 			}
 			
@@ -290,23 +260,23 @@ function processMsg(msg,vThis)
 					if (!vThis.props.multiUser)
 					{
 						const data = msg.tbInitObj.data || [];
-						vThis.saveToDatastore(vThis.activeTblConfig,funcs,data,null,msg._msgid);
+						msg.dsImage = {config:vThis.activeTblConfig,funcs:funcs,data:data,styleMap:null};
 					}
 					msg.payload = result;				
 				})
 				.catch((error) => {
 					msg.error = error;
 					if (!vThis.props.multiUser)
-						vThis.clearDatastore(msg._msgid);
+						msg.dsImage = {config:null,funcs:null,data:null,styleMap:null};
 				})
-				.finally(()=>{ vThis.send(msg) });
+				.finally(()=>{ vThis.sendResponse(msg) });
 			return;
 		case "tbDestroyTable":
 		case "destroy":  // Overloads Tabulator.destroy(), to enable graceful cleanup
 			destroyTable(vThis);
 			if (!vThis.props.multiUser)
-				vThis.clearDatastore(msg._msgid);
-			vThis.send(msg);
+				msg.dsImage = {config:null,funcs:null,data:null,styleMap:null};
+			vThis.sendResponse(msg);
 			return; 
 		case "tbResetTable":
 			debugLog("Table "+vThis.tblName+": reloading table from node configuration");
@@ -319,11 +289,11 @@ function processMsg(msg,vThis)
 					const cfg = cloneObj(vThis.origTblConfig);
 					const data = cfg.data || [];
 					delete cfg.data;
-					vThis.saveToDatastore(cfg,vThis.origTblFuncs,data,null,msg._msgid);
+					msg.dsImage = {config:cfg,funcs:vThis.origTblFuncs,data:data,styleMap:null};
 				}
 			})
             .catch((err)=>{console.log("Table creation error:",err)})
-			.finally(()=>{vThis.send(msg)});
+			.finally(()=>{vThis.sendResponse(msg)});
             return;
 //------------------------------------------------------------------
 // internal synchronization commands
@@ -339,21 +309,8 @@ function processMsg(msg,vThis)
 			msg.payload = "Test Connection";
 			msg.nodeId = vThis.id;
 			msg.clientSockId = vThis.$socket.id;
-			if (!msg.listener)
-				msg.listener = 'tbClientCommands';
-			switch (msg.listener)
-			{
-				//case 'widget-action':
-				//	vThis.$socket.emit('widget-action', vThis.id, msg)
-				//	break;
-				case 'tbSendMessage':
-					vThis.$socket.emit('tbSendMessage'/*+vThis.id*/, vThis.id, msg)
-					break;
-				case 'tbClientCommands':
-					msg.tbClientCmd = 'tbTestConnection';
-					vThis.$socket.emit('tbClientCommands'/*+vThis.id*/, vThis.id, msg)
-			}
-			console.log("Sent connection test ping to listener "+msg.listener);
+			console.log("Sending connection test ping to listener 'widget-action'");
+			vThis.$socket.emit('widget-action', vThis.id, msg);
 			return; 
 /*
 		case "tbSetTableId":	// internal command to set an Id to the table's HTML Div, to allow direct API access from external nodes
@@ -365,7 +322,7 @@ function processMsg(msg,vThis)
 			}
 			else
 				msg.error = "Invalid Table Id";
-			vThis.send(msg);
+			vThis.sendResponse(msg);
 			return; 
 */
 	}
@@ -375,14 +332,14 @@ function processMsg(msg,vThis)
 	if (!vThis.tblReady)
 	{
 		msg.error = 'Table does not exist or is not ready';
-		vThis.send(msg);
+		vThis.sendResponse(msg);
 		return;
 	}
 	const args = msg.tbArgs ? cloneObj(msg.tbArgs) : [];	// Clone the args array to avoid proxy issues
 	if (!vThis.props.allowMsgFuncs && hasInlineFuncs(args))
 	{
 		msg.error = "Messages with function definitions are blocked in the node configuration";
-		vThis.send(msg);
+		vThis.sendResponse(msg);
 		return;
 	}
 // ***********************************************
@@ -404,21 +361,21 @@ function processMsg(msg,vThis)
 				.then(result => { 
 					if (!vThis.props.multiUser)  
 						// update only style map
-						vThis.saveToDatastore(undefined /*config*/,undefined /*funcs*/,undefined /*data*/,null /*styleMap */,msg._msgid);
+						msg.dsImage = {styleMap:null};
 					msg.payload = "Table styles cleared";
 				})
 				.catch(error => {
 					msg.error = error;
 					if (!vThis.props.multiUser)
-						vThis.clearDatastore(msg._msgid);
+						msg.dsImage = {config:null,funcs:null,data:null,styleMap:null};
 				})
-				.finally(()=>{ vThis.send(msg) });
+				.finally(()=>{ vThis.sendResponse(msg) });
 			return;
 		case "tbSetGroupBy":
 			if (!vThis.props.allowMsgFuncs && msg.hasOwnProperty("tbGroupHeader") && hasInlineFuncs(msg.tbGroupHeader))
 			{
 				msg.error = "Messages with function definitions are blocked in the node configuration";
-				vThis.send(msg);
+				vThis.sendResponse(msg);
 				return;
 			}
 			setGroupBy(msg,vThis);
@@ -438,7 +395,7 @@ function processMsg(msg,vThis)
 			if (vThis.props.validateRowIds && !checkInputRowIds(args[0],vThis.rowIdField))
 			{
 				msg.error = "Missing, invalid or duplicate input row Id's";
-				vThis.send(msg);
+				vThis.sendResponse(msg);
 				return;
 			}
 			tabulatorAsyncAPI(cmd,args,msg,vThis);
@@ -448,7 +405,7 @@ function processMsg(msg,vThis)
 			if (vThis.props.validateRowIds && (!checkInputRowIds(args[0],vThis.rowIdField) || !checkAddedDupRows(args[0],vThis)))
 			{
 				msg.error = "Missing, invalid or already existing row Id's";
-				vThis.send(msg);
+				vThis.sendResponse(msg);
 				return;
 			}
 			tabulatorAsyncAPI(cmd,args,msg,vThis);
@@ -457,7 +414,7 @@ function processMsg(msg,vThis)
 			if (vThis.props.validateRowIds && (!checkInputRowIds([args[0]],vThis.rowIdField) || !checkAddedDupRows([args[0]],vThis)))
 			{
 				msg.error = "Missing, invalid or already existing row Id";
-				vThis.send(msg);
+				vThis.sendResponse(msg);
 				return;
 			}
 			tabulatorAsyncAPI(cmd,args,msg,vThis);
@@ -466,7 +423,7 @@ function processMsg(msg,vThis)
 			if (vThis.props.validateRowIds && !checkInputRowIds([args[1]],vThis.rowIdField))  // checking the 2d argument
 			{
 				msg.error = "Missing or invalid row Id in data object";
-				vThis.send(msg);
+				vThis.sendResponse(msg);
 				return;
 			}
 			tabulatorAsyncAPI(cmd,args,msg,vThis);
@@ -506,7 +463,7 @@ function processMsg(msg,vThis)
 			if (setFuncs(args,vThis.activeTblFuncs) > 0) // errCount > 0
 				console.warn("Missing or invalid user-defined function");
 			msg.payload = tabulatorSyncAPI(cmd,args,msg,vThis);
-			vThis.send(msg);
+			vThis.sendResponse(msg);
 			return;
 		//------------------------------------------------------------------------------
 		// data-query commands called sync, which require special result parsing
@@ -517,7 +474,7 @@ function processMsg(msg,vThis)
 				msg.payload = rowComponent.getData();
 			else
 				msg.error = "Invalid Row Id";
-			vThis.send(msg);
+			vThis.sendResponse(msg);
 			return;
 		default:
 		/*
@@ -528,7 +485,7 @@ function processMsg(msg,vThis)
 				tabulatorFreehandAPI(cmd,args,msg,vThis);
 		*/
 			msg.error = "Missing or invalid command";
-			vThis.send(msg);
+			vThis.sendResponse(msg);
 			return;
 	}
 }
@@ -583,12 +540,12 @@ function tabulatorFreehandAPI(cmd,args,msg,vThis)
 				else
 					msg.error = "API response cannot be serialized to a msg";
 			}
-			vThis.send(msg);
+			vThis.sendResponse(msg);
 		}
 	}
 	catch (err) {  // handle sync error
 		msg.error = err;
-		vThis.send(msg);
+		vThis.sendResponse(msg);
 	}
 }
 function isSendable(obj)
@@ -652,9 +609,9 @@ function updateAndRespond(msg,vThis)
 					break;
 			}
 		}
-		vThis.saveToDatastore(vThis.activeTblConfig,vThis.activeTblFuncs,vThis.tbl.getData(),vThis.tblStyleMap,msg._msgid);
+		msg.dsImage = {data:vThis.tbl.getData(),styleMap:vThis.tblStyleMap};
 	}
-	vThis.send(msg);
+	vThis.sendResponse(msg);
 }
 // ********************************************************************************************************************
 function createTable(cfg,funcs,styleMap,vThis)
@@ -701,13 +658,12 @@ return new Promise((resolve, reject) => {
 		else
 			vThis.tbl = new Tabulator("#"+vThis.tblDivId, initObj);
 		
-			// console.log("Table created");
-			// vThis.send({payload:"Table created"});
+			//console.log("Table created");
+			//vThis.sendNotification(new tbEventMsg("Table created"));
 		
 		// Table creation is asynchronous. The setup resumes after the table finished initializing, in the below "TableBuilt" callback
 		//----------------------------------------------------------------------------------------------------------------------------
 		vThis.tbl.on("tableBuilt", function()    {
-
 			if (cfg.hasOwnProperty("index"))	// overriding the default 'id' field as the row identifier
 				vThis.rowIdField = cfg.index;
 
@@ -787,7 +743,7 @@ function initialTableLoad(dsImage,vThis)
 	
 	// shared mode: load from datastore
 	//------------------------------------
-	if (!dsImage.config)  // stored image = 'no table'
+	if (!(dsImage?.config))  // no stored image, or image = 'no table'
 	{
 		console.log("Table "+vThis.tblName+": No configuration in datastore, table not created.");
 		return;
@@ -915,13 +871,13 @@ msg.tbScope = {};                             // affects the whole table
 		{
 			updateStyleMap(rowId,field,styles,vThis);
 			// update DS style map only
-			vThis.saveToDatastore(undefined /*config*/,undefined /*funcs*/,undefined /*data*/,vThis.tblStyleMap,msg._msgid);
+			msg.dsImage = {styleMap:vThis.tblStyleMap};
 		}
 	}
 	catch {
 		//console.log("Omri: error");
 	}
-	finally  {  /*msg.updMap = vThis.tblStyleMap;*/ vThis.send(msg) }
+	finally  {  /*msg.updMap = vThis.tblStyleMap;*/ vThis.sendResponse(msg) }
 }
 //------------------------------------------------------------------------------------------
 function updateStyleMap(rowId,field,styles,vThis)
@@ -1147,7 +1103,7 @@ function setGroupBy(msg,vThis)
 	catch (err)	{
 		msg.error = "GroupBy error: "+err;
 	}
-	finally  { vThis.send(msg) }
+	finally  { vThis.sendResponse(msg) }
 }
 // ********************************************************************************************************************
 function cellEditSync(msg,vThis)
@@ -1171,8 +1127,8 @@ function setEventNotifications(vThis)
 	let eventStr = vThis.props.events;
 	let eventArr = eventStr.split(',');
 	
-	// If required for client sync, force cell-edit notifications
-	if (!vThis.props.multiUser && !vThis.props.events.includes("cellEdited"))
+	// If required, force cell-edit notifications
+	if (!vThis.props.events.includes("cellEdited") && !vThis.props.multiUser)
 		eventArr.push("cellEdited");
 
 	for (let i = 0 ; i < eventArr.length ; i++)
@@ -1189,20 +1145,20 @@ function setEventNotifications(vThis)
 				break;
 			case "tableDestroyed":  // Sent *after* table is destroyed
 				vThis.tbl.on(ev, function(){
-					let eventMsg = new tbEventMsg(ev);
+					const eventMsg = new tbEventMsg(ev);
 					vThis.sendNotification(eventMsg);
 				});
 				break;
 			case "dataChanged":
 				vThis.tbl.on(ev, function(data){
-					let eventMsg = new tbEventMsg(ev);
+					const eventMsg = new tbEventMsg(ev);
 					eventMsg.payload = data;
 					vThis.sendNotification(eventMsg);
 				});
 				break;
 			case "columnMoved":
 				vThis.tbl.on(ev, function(column,colArr){
-					let eventMsg = new tbEventMsg(ev);
+					const eventMsg = new tbEventMsg(ev);
 					const fields = [];
 					colArr.forEach((element) => fields.push(element.getField()));
 					eventMsg.payload = {
@@ -1219,7 +1175,7 @@ function setEventNotifications(vThis)
 					for (let i = 0 ; i < rows.length ; i++)
 						filteredData[i] = rows[i].getData();
 
-					let eventMsg = new tbEventMsg(ev);
+					const eventMsg = new tbEventMsg(ev);
 					eventMsg.payload = { filteredData: filteredData };
 					vThis.sendNotification(eventMsg);
 				});
@@ -1234,7 +1190,7 @@ function setEventNotifications(vThis)
 			case "rowDblTap":
 			case "rowTapHold":
 				vThis.tbl.on(ev, function(evObj,row){	// row = row component
-					let eventMsg = rowEventMsg(row,ev);
+					const eventMsg = rowEventMsg(row,ev);
 					vThis.sendNotification(eventMsg);
 				});
 				break;
@@ -1247,7 +1203,7 @@ function setEventNotifications(vThis)
 			case "rowMoved": // event is triggered when a row has been successfully moved
 			case "rowMoveCancelled": // event is triggered when a row has been moved but has not changed position in the table
 				vThis.tbl.on(ev, function(row){	// row = row component
-					let eventMsg = rowEventMsg(row,ev);
+					const eventMsg = rowEventMsg(row,ev);
 					vThis.sendNotification(eventMsg);
 				});
 				break;
@@ -1256,16 +1212,14 @@ function setEventNotifications(vThis)
 		//-------------------------------------------------------
 			case "cellEdited":
 				vThis.tbl.on(ev, function(cell)	{  // cell = cell component
-
-					let eventMsg = new tbEventMsg(ev);
-					eventMsg._client = {socketId:vThis.$socket.id};
+					const eventMsg = new tbEventMsg(ev);
 					
-					let row = cell.getRow();
-					let col = cell.getColumn();
-					let rowIdField = vThis.rowIdField;
-					let rowId = row.getIndex();
-					let field = col.getField();
-					let value = cell.getValue();
+					const row = cell.getRow();
+					const col = cell.getColumn();
+					const rowIdField = vThis.rowIdField;
+					const rowId = row.getIndex();
+					const field = col.getField();
+					const value = cell.getValue();
 					
 					if (vThis.props.events.includes("cellEdited"))	// Event is registered for notifications
 					{
@@ -1280,15 +1234,22 @@ function setEventNotifications(vThis)
 					// if not multi-user, send client sync notification
 					if (!vThis.props.multiUser)
 					{
-						eventMsg.payload = {
-							timestamp: Date.now(),
+						const syncMsg = new tbEventMsg("tbCellEditedSync");
+						syncMsg.payload = {
 							idField: rowIdField,
 							rowId:   rowId,
 							field:   field,
 							value:   value
 						}
-						vThis.sendClientCommand("tbCellEditSync",eventMsg);	
+						vThis.sendNotification(syncMsg);
 					};
+				});
+				break;
+			case "cellEditing":
+			case "cellEditCancelled":
+				vThis.tbl.on(ev, function(cell){	// cell = cell component
+					const eventMsg = cellEventMsg(cell,ev);
+					vThis.sendNotification(eventMsg);
 				});
 				break;
 			case "cellClick":
@@ -1297,7 +1258,7 @@ function setEventNotifications(vThis)
 			case "cellDblTap":
 			case "cellTapHold":
 				vThis.tbl.on(ev, function(e,cell){	// e = mouse event, cell = cell component
-					let eventMsg = cellEventMsg(cell,ev);
+					const eventMsg = cellEventMsg(cell,ev);
 					vThis.sendNotification(eventMsg);
 				});
 				break;
@@ -1432,7 +1393,6 @@ function tbStyleMapRow(rowId)
 }
 function tbEventMsg(ev)
 {
-	// "tbNotification" will be set in this.msgType instead of this.topic, to work around a dashboard bug - as of v2.3.0 'msg.topic' is being overwritten to 'undefined' (issue #1683).
 	this.msgType = "tbNotification";
 	this.event = ev;
 	this.payload = {};

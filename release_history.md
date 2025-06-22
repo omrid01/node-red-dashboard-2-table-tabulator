@@ -1,5 +1,11 @@
 # ui-tabulator Release History
 
+## v0.8.0, 22-June-2025
+
+* Internal update &AMP; optimization of node<->widget communication framework and datastore structure
+* Bypass the default **'widget-action'** message handler, to avoid the overrun of **msg.topic** with **undefined**.
+* Support for additional table events: **cellEditing** &AMP; **cellEditCancelled**
+
 ## v0.7.2, 17-May-2025
 
 * Introducing a new property **tbName** in all output messages, with the configured node name (or, if name is not configured, the node Id). This enables to identify the sending table in case of multiple table nodes.

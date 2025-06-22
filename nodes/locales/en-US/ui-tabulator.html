@@ -336,7 +336,7 @@ For example:
 <ul>
 <li><b>Table Creation</b><pre><code>tableBuilt, tableDestroyed</code></pre></li>
 <li><b>UI Interaction</b><pre><code>rowClick, rowDblClick, rowTap, rowDblTap, rowTapHold, rowSelected, rowDeselected, rowMoving, rowMoved, rowMoveCancelled, columnMoved, cellClick, cellDblClick, cellTap, cellDblTap, cellTapHold</code></pre></li>
-<li><b>Cell Change (by user in-cell editing) </b><pre><code>cellEdited</code></pre></li>
+<li><b>Cell Change (by user in-cell editing) </b><pre><code>cellEditing, cellEdited, cellEditCancelled</code></pre></li>
 <li><b>Data Change</b><pre><code>rowAdded, rowUpdated, rowDeleted, dataChanged</code></pre></li>
 </ul>
 </p>
@@ -407,8 +407,8 @@ These classes are applied per table widget, allowing each table on the page to h
 	<br></li>
 </ul></p>
 
-<li><p><code>tbTestConnection</code>: tests the socket listeners between the Node-RED server and dashboard clients.<br>
-	Arguments: <code>msg.listener</code> - can be either <code>tbSendMessage</code> or <code>tbClientCommands</code><br></p></li>
+<li><p><code>tbTestConnection</code>: tests the socket listener between the Node-RED server and dashboard clients.<br>
+	For each active client connection, it prints to the console as well as replies with a message<br></p></li>
 	
 <li><p><code>tbGetClientCount</code>: returns the nuber of connected dashboard clients.<br>
 	Arguments: None<br>
