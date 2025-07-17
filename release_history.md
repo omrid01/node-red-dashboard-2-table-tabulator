@@ -1,5 +1,10 @@
 # ui-tabulator Release History
 
+## v0.8.1, 17-July-2025
+
+* Implicitly import the **luxon** date-time package (on which Tabulator depends for date-time presenation & calculation)
+* Fix an issue with style scoping
+
 ## v0.8.0, 22-June-2025
 
 * Internal update &AMP; optimization of node<->widget communication framework and datastore structure

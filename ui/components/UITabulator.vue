@@ -7,6 +7,10 @@
 @import  "../../node_modules/tabulator-tables/dist/css/tabulator.min.css"
 </style>
 <script>
+//import { DateTime } from 'luxon';
+import * as luxon from 'luxon';
+window.luxon = luxon;
+
 import {TabulatorFull as Tabulator} from 'tabulator-tables';
 import { markRaw } from 'vue'
 import { mapState } from 'vuex'
@@ -438,9 +442,11 @@ function processMsg(msg,vThis)
 	//----------------------------------------------------------------------------------------------------
 		case "clearData":
 			tabulatorSyncAPI(cmd,args,msg,vThis);
-			updateAndRespond(msg,vThis);
+			adjustStyleMap(msg,vThis);
+			if (!vThis.props.multiUser)
+				msg.dsImage = {data:[],styleMap:vThis.tblStyleMap};
+			vThis.sendResponse(msg);
 			return;
-
 //-----------------------------------------------------------------------------------------------------------------
 // Data non-changing commands (queries etc.) - always synchronous invocation (Tabulator API call returns immediately)
 //-----------------------------------------------------------------------------------------------------------------
@@ -499,7 +505,12 @@ function tabulatorAsyncAPI(cmd,args,msg,vThis)
 	vThis.tbl[cmd](...args)
 		.then((resolveVal)=>{ debugLog("resolve value for async API=",resolveVal)})
 		.catch((err)=>{msg.error = err})
-		.finally(()=>{updateAndRespond(msg,vThis)});  // update Datastore even upon error, as cmd may have been applied partially
+		.finally(()=>{
+			adjustStyleMap(msg,vThis);
+			if (!vThis.props.multiUser)
+				msg.dsImage = {data:vThis.tbl.getData(),styleMap:vThis.tblStyleMap};
+			vThis.sendResponse(msg); // update Datastore even upon error, as cmd may have been applied partially
+		});
 }
 //----------------------------------------------------
 function tabulatorSyncAPI(cmd,args,msg,vThis)
@@ -528,7 +539,14 @@ function tabulatorFreehandAPI(cmd,args,msg,vThis)
 		{
 			response.then((resolveVal)=>{ debugLog("resolve value for freehand API=",resolveVal)})
 			.catch((err)=>{msg.error = err})
-			.finally(()=>{updateAndRespond(msg,vThis)});  // update Datastore even upon error, as cmd may have been applied partially
+			.finally(()=>{
+				adjustStyleMap(msg,vThis);
+				if (!vThis.props.multiUser)
+					msg.dsImage = {data:vThis.tbl.getData(),styleMap:vThis.tblStyleMap};
+				vThis.sendResponse(msg); // update Datastore even upon error, as cmd may have been applied partially
+			}
+		}	
+			updateAndRespond(msg,vThis)});  // update Datastore even upon error, as cmd may have been applied partially
 		}
 		else  // handle sync result
 		{
@@ -560,58 +578,44 @@ function isSendable(obj)
 	}
 }
 */
-
 // ********************************************************************************************************************
-function updateAndRespond(msg,vThis)
+function adjustStyleMap(msg,vThis)
 {
-	debugLog("Executing updateAndRespond()");
-
-	//---------------------------------------------------------------------------------------------------------
-	// Generic post-command callback for async data-changing commands, which:
-	//   - in shared mode, update the table's style map (if needed), and the datastore
-	//   - sends a response command
-	//---------------------------------------------------------------------------------------------------------
-	if (!vThis.props.multiUser)
+//-----------------------------------------------------------------------------------
+// following data-changing commands, adjust/apply the table's style map (if needed):
+// - new rows: apply column & table scoped styles
+// - deleted rows: remove them from the style map
+//-----------------------------------------------------------------------------------
+	// Update style map, in case rows have been added or deleted
+	const map = vThis.tblStyleMap;
+	if (map)
 	{
-		// Update style map, in case rows have been added or deleted
-		const map = vThis.tblStyleMap;
-		if (map)  // styleMap exists, adjust it according to the data change
-		{
-			const tbl = vThis.tbl;
-			const rowIdField = vThis.rowIdField;
+		const tbl = vThis.tbl;
+		const rowIdField = vThis.rowIdField;
 
-			switch (msg.tbCmd)
-			{
-				case "setData":
-				case "replaceData":
-					// remove row-style objects of rows which no longer exist
-					const allRows = tbl.getRows();
-					map.rows = map.rows.filter((row) => {
-						const index = allRows.findIndex((rowComp) => {rowComp.getCell(rowIdField).getValue() == row.rowId});  // not ===
-						return index >= 0 ? true : false;
-					});
-					applyFromStyleMap(vThis);
-					break;
-				case "addData":
-				//case "updateData": - nothing to do here
-				case "updateOrAddData":
-				case "addRow":
-				// case "updateRow": - nothing to do here
-				case "updateOrAddRow":
-					applyFromStyleMap(vThis)
-					break;
-				case "deleteRow":
-					const rowId = msg.tbArgs[0];
-					map.rows = map.rows.filter((row) => row.rowId != rowId); // not !==
-					break;
-				case "clearData":
-					map.rows = [];
-					break;
-			}
+		switch (msg.tbCmd)
+		{
+			case "setData":
+			case "replaceData":
+			case "clearData":
+				// remove all row & cell styles
+				map.rows = []; // no need to re-apply on the table
+				break;
+			case "addData":
+			//case "updateData": - nothing to do here
+			case "updateOrAddData":
+			case "addRow":
+			// case "updateRow": - nothing to do here
+			case "updateOrAddRow":
+				applyFromStyleMap(vThis)  // apply table & column scoped styles on added rows
+				break;
+			case "deleteRow":
+				// remove deleted rows from map structure. no need to re-apply  on table
+				const rowId = msg.tbArgs[0];
+				map.rows = map.rows.filter((row) => row.rowId != rowId); // not !==
+				break;
 		}
-		msg.dsImage = {data:vThis.tbl.getData(),styleMap:vThis.tblStyleMap};
 	}
-	vThis.sendResponse(msg);
 }
 // ********************************************************************************************************************
 function createTable(cfg,funcs,styleMap,vThis)
@@ -766,77 +770,98 @@ function initialTableLoad(dsImage,vThis)
 function setStyle(scope,styles,msg,vThis)
 {
 /*  Logic:
-msg.tbScope = {rowId:2,field:"name"};         // affects the cell in row 2, column "name"
-msg.tbScope = {rowId:2};                      // affects all row 2
-msg.tbScope = {field:"name"};		          // affects the whole column "name"
-msg.tbScope = {rowId:"tbHeader",field:"name"};// affects the header of column "name"
-msg.tbScope = {rowId:"tbHeader"};             // affects all the headers
 msg.tbScope = {};                             // affects the whole table
+msg.tbScope = {field:"name"};		          // affects the whole column "name"
+msg.tbScope = {rowId:"tbHeader"};             // affects all headers
+msg.tbScope = {rowId:"tbHeader",field:"name"};// affects the header of column "name"
+msg.tbScope = {rowId:2};                      // affects all row 2
+msg.tbScope = {rowId:2,field:"name"};         // affects the cell in row 2, column "name"
 */
-	const rowId = (scope?.rowId !== undefined && scope?.rowId !== null) ? scope.rowId : null;
+	const rowId = (scope && scope.rowId !== undefined && scope.rowId !== null) ? scope.rowId : null;
 	const field = scope?.field || null;
-//console.log("rowId="+rowId);
-//console.log("field="+field);
+
+	let newMap = false;
+	if (!vThis.tblStyleMap)
+	{
+		newMap = true;
+		vThis.tblStyleMap = new tbStyleMap();
+	}
+	const map = vThis.tblStyleMap;
 	
 	try  {
-		if (rowId === null)
+		// Scope = whole table -----------------------------------------------
+		if (rowId === null && field === null)
 		{
-			if (field === null)	// apply to whole table
+			const rowComponents = vThis.tbl.getRows();
+			for (let i = 0; i < rowComponents.length ; i++)
 			{
-				const rowComponents = vThis.tbl.getRows();
-				for (let i = 0; i < rowComponents.length ; i++)
-				{
-					const element = rowComponents[i].getElement();
-					applyStyles(element,styles);
-				}
+				const element = rowComponents[i].getElement();
+				applyStyles(element,styles);
 			}
-			else  // apply to whole column
-			{
-				const colComponent = vThis.tbl.getColumn(field);
-				if (colComponent)
-				{
-					const cells = colComponent.getCells();
-					for (let i = 0; i < cells.length ; i++)
-					{
-						const element = cells[i].getElement();
-						applyStyles(element,styles);
-					}
-				}
-				else
-				{
-					msg.error = "Invalid field (column) name";
-					throw ""
-				}
-			}
+			// update styleMap
+			if (!map.tblStyles)
+				map.tblStyles = {};
+			map.tblStyles = addStyles(map.tblStyles,styles);
 		}
-		else if (rowId == vThis.tblHeaderRowId)  // column header(s)
+		// Scope = single column -----------------------------------------------
+		else if  (rowId === null && field !== null)
 		{
-			if (field)	// scope = single column header
+			const colComponent = vThis.tbl.getColumn(field);
+			if (!colComponent)
 			{
-				const colComponent = vThis.tbl.getColumn(field);
-				if (colComponent)
-				{
-					const element = colComponent.getElement();
-					applyStyles(element,styles);
-				}
-				else
-				{
-					msg.error = "Invalid field (column) name";
-					throw ""
-				}
+				msg.error = "Invalid field (column) name";
+				throw ""
 			}
-			else	// scope = all column headers
+			const cells = colComponent.getCells();
+			for (let i = 0; i < cells.length ; i++)
+			{
+				const element = cells[i].getElement();
+				applyStyles(element,styles);
+			}
+			// update styleMap
+			if (!map.colStyles)
+				map.colStyles = {};
+			map.colStyles[field] = addStyles(map.colStyles[field],styles);
+		}
+		// Scope = all or single column headers -----------------------------------------------
+		else if (rowId === vThis.tblHeaderRowId)
+		{
+			if (!map.hdrStyles)
+				map.hdrStyles = {};
+
+			// Scope = all column headers -----------------------------------------------
+			if (field === null)
 			{
 				const hdrCells = vThis.tbl.getColumns();
 				for (let i = 0; i < hdrCells.length ; i++)
-					if (hdrCells[i].getField())
+				{
+					const colName = hdrCells[i].getField();
+					if (colName)
 					{
 						const element = hdrCells[i].getElement();
 						applyStyles(element,styles);
+						// update styleMap
+						map.hdrStyles[colName] = addStyles(map.hdrStyles[colName],styles);
 					}
+				}
+			}
+			// Scope = single column header -----------------------------------------------
+			else  // field !== null
+			{
+				const colComponent = vThis.tbl.getColumn(field);
+				if (!colComponent)
+				{
+					msg.error = "Invalid field (column) name";
+					throw ""
+				}
+				const element = colComponent.getElement();
+				applyStyles(element,styles);
+				// update styleMap
+				map.hdrStyles[field] = addStyles(map.hdrStyles[field],styles);
 			}
 		}
-		else	// single row or cell
+		// Scope = whole row or single cell ----------------------------------------
+		else  // rowId !== null && rowId !== header row Id
 		{
 			const rowComponent = vThis.tbl.getRow(rowId);
 			if (!rowComponent)
@@ -844,97 +869,58 @@ msg.tbScope = {};                             // affects the whole table
 				msg.error = "Invalid row Id";
 				throw "";
 			}
-			else
+			let rowObj = map.rows.find((obj)=> obj.rowId == rowId);  // not ===
+			if (!rowObj)
 			{
-				if (field)	// apply to single cell
-				{
-					const cellComponent = rowComponent.getCell(field);
-					if (!cellComponent)
-					{
-						msg.error = "Invalid field (column) name";
-						throw "";
-					}
-					else
-					{
-						const element = cellComponent.getElement();
-						applyStyles(element,styles);
-					}
-				}
-				else  // full row
-				{
-					const element = rowComponent.getElement();
-					applyStyles(element,styles);
-				}
+				rowObj = new tbStyleMapRow(rowId);
+				map.rows.push(rowObj);
 			}
-		}
-		if (!vThis.props.multiUser)
-		{
-			updateStyleMap(rowId,field,styles,vThis);
-			// update DS style map only
-			msg.dsImage = {styleMap:vThis.tblStyleMap};
+			// Scope = whole row --------------------------------------------------
+			if (field === null)
+			{
+				const element = rowComponent.getElement();
+				applyStyles(element,styles);
+				// update styleMap
+				if (!rowObj.rowStyles)
+					rowObj.rowStyles = {};
+				rowObj.rowStyles = addStyles(rowObj.rowStyles,styles);
+			}
+			// Scope = single cell --------------------------------------------------
+			else  // field !== null
+			{
+				const cellComponent = rowComponent.getCell(field);
+				if (!cellComponent)
+				{
+					msg.error = "Invalid field (column) name";
+					throw "";
+				}
+				const element = cellComponent.getElement();
+				applyStyles(element,styles);
+				// update styleMap
+				if (!rowObj.cellStyles)
+					rowObj.cellStyles = {};
+				rowObj.cellStyles[field] = addStyles(rowObj.cellStyles[field],styles);
+			}
 		}
 	}
 	catch {
+		if (newMap)
+			vThis.tblStyleMap = null;
 		//console.log("Omri: error");
 	}
-	finally  {  /*msg.updMap = vThis.tblStyleMap;*/ vThis.sendResponse(msg) }
-}
-//------------------------------------------------------------------------------------------
-function updateStyleMap(rowId,field,styles,vThis)
-{
-	if (!vThis.tblStyleMap)
-		vThis.tblStyleMap = new tbStyleMap();
-	const map = vThis.tblStyleMap;
-	
-	if (rowId === null)	
-	{
-		if (field === null) // Table scope
-			map.tblStyles = mergeStyles(map.tblStyles,styles);
-		else // column scope
-		{
-			if (!map.colStyles)
-				map.colStyles = {};
-			map.colStyles[field] = mergeStyles(map.colStyles[field],styles);
-		}
-	}
-	else if (rowId == vThis.tblHeaderRowId)  // column header(s)
-	{
-		if (!map.hdrStyles)
-			map.hdrStyles = {};
-		if (field)	// single column header
-			map.hdrStyles[field] = mergeStyles(map.hdrStyles[field],styles);
-		else	// all column headers
-		{
-			let hdrs = vThis.tbl.getColumns();
-			for (let i = 0; i < hdrs.length ; i++)
-			{
-				const colName = hdrs[i].getField();
-				if (colName)
-					map.hdrStyles[colName] = mergeStyles(map.hdrStyles[colName],styles);
-			}
-		}
-	}
-	else	// single row or cell
-	{
-		let rowObj = map.rows.find((obj)=> obj.rowId == rowId);  // not ===
-		if (!rowObj)
-		{
-			rowObj = new tbStyleMapRow(rowId);
-			map.rows.push(rowObj);
-		}
-		if (field)  // single cell
-			rowObj.cells[field] = mergeStyles(rowObj.cells[field],styles);
-		else  // whole row
-			rowObj.rowStyles = mergeStyles(rowObj.rowStyles,styles);
+	finally  {
+		if (!vThis.props.multiUser)
+			msg.dsImage = {styleMap:vThis.tblStyleMap};
+		vThis.sendResponse(msg)
 	}
 }
 //------------------------------------------------------------------------------------------
 function applyFromStyleMap(vThis)
 {
 	const map = vThis.tblStyleMap;
-	const tbl = vThis.tbl;
 	if (!map)
 		return;
+	const tbl = vThis.tbl;
 		
 	// 1st, apply table-level styles
 	if (map.tblStyles)
@@ -946,22 +932,7 @@ function applyFromStyleMap(vThis)
 			applyStyles(element,map.tblStyles);
 		}
 	}
-	// 2nd, apply to header row
-	if (map.hdrStyles)
-	{
-		for (let field in map.hdrStyles)
-		{
-			const colComponent = tbl.getColumn(field);
-			if (colComponent)
-			{
-				const element = colComponent.getElement();
-				applyStyles(element,map.hdrStyles[field]);
-			}
-			else
-				console.error("Invalid column header in style map");
-		}
-	}
-	// 3rd, apply to columns
+	// 2nd, apply to columns
 	if (map.colStyles)
 	{
 		for (let field in map.colStyles)
@@ -980,6 +951,21 @@ function applyFromStyleMap(vThis)
 				console.error("Invalid column in style map");
 		}
 	}
+	// 3rd, apply to header row
+	if (map.hdrStyles)
+	{
+		for (let field in map.hdrStyles)
+		{
+			const colComponent = tbl.getColumn(field);
+			if (colComponent)
+			{
+				const element = colComponent.getElement();
+				applyStyles(element,map.hdrStyles[field]);
+			}
+			else
+				console.error("Invalid column header in style map");
+		}
+	}
 	// 4th, apply to rows, and/or individual cells
 	for (let i = 0 ; i < map.rows.length ; i++)
 	{
@@ -994,17 +980,18 @@ function applyFromStyleMap(vThis)
 			}
 
 			// 4.2 apply cell-specific styles
-			for (let field in map.rows[i].cells)
-			{
-				const cellComponent = rowComponent.getCell(field);
-				if (cellComponent)
+			if (map.rows[i].cellStyles)
+				for (let field in map.rows[i].cellStyles)
 				{
-					const element = cellComponent.getElement();
-					applyStyles(element,map.rows[i].cells[field]);
+					const cellComponent = rowComponent.getCell(field);
+					if (cellComponent)
+					{
+						const element = cellComponent.getElement();
+						applyStyles(element,map.rows[i].cellStyles[field]);
+					}
+					else
+						console.error("Invalid cell in style map");
 				}
-				else
-					console.error("Invalid cell in style map");
-			}
 		}
 		else
 			console.error("Invalid row in style map");
@@ -1022,7 +1009,7 @@ function applyStyles(element,styles)
 			console.warn("Invalid style "+prop);
 	}		
 }
-function mergeStyles(mapObj,styles)
+function addStyles(mapObj,styles)
 {
 	if (!mapObj)
 		mapObj = {};
@@ -1383,13 +1370,13 @@ function tbStyleMap()
 	this.tblStyles = null; // table defaults - apply to all table rows
 	this.hdrStyles = null; // header object, with column-specific styles
 	this.colStyles = null; // column-specific styles, which apply to the whole column
-	this.rows	   = [];   // array of row objects, each with row style + cell-specific styles
+	this.rows	   = [];   // array of row objects, each with row Id, row styles & cell-specific styles
 }
 function tbStyleMapRow(rowId)
 {
-	this.rowId	   = rowId;
-	this.rowStyles = null;
-	this.cells 	   = {};
+	this.rowId	   	= rowId;
+	this.rowStyles 	= null;
+	this.cellStyles = null;
 }
 function tbEventMsg(ev)
 {
