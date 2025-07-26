@@ -1,8 +1,13 @@
 # ui-tabulator Release History
 
+## v0.8.2, 26-July-2025
+
+* Add support for hierarchical data (dot-notated column names)
+* Enable freehand (unlisted) API calls (undocumented feature, user responsibility)
+
 ## v0.8.1, 17-July-2025
 
-* Implicitly import the **luxon** date-time package (on which Tabulator depends for date-time presenation & calculation)
+* Implicitly import the **luxon** date-time package (on which Tabulator depends for date-time presentation & calculation)
 * Fix an issue with style scoping
 
 ## v0.8.0, 22-June-2025

@@ -47,6 +47,7 @@ export default {
 			tblDivId:		"",		// Optional, allows table instantiation on a specified Div
 			tblName:		"",		// Table alias, either the node name (if defined) else node id
 			rowIdField:		"id",	// The name of the field which holds the unique row Id (the default is 'id', but can be overridden)
+			silentCellUpdate:false,  // Flag for allowing silent cell update without sending a 'cellEdited' notification
 
 			origTblConfig:	null,	// original table configuration, as configured in the node (converted from JSON to an object). null=no table config in the node
 			origTblFuncs:	null,	// Original the custom functions configured in the node (converted from text to an object). null=no functions
@@ -269,7 +270,7 @@ function processMsg(msg,vThis)
 					msg.payload = result;				
 				})
 				.catch((error) => {
-					msg.error = error;
+					msg.error = error.message;
 					if (!vThis.props.multiUser)
 						msg.dsImage = {config:null,funcs:null,data:null,styleMap:null};
 				})
@@ -369,7 +370,7 @@ function processMsg(msg,vThis)
 					msg.payload = "Table styles cleared";
 				})
 				.catch(error => {
-					msg.error = error;
+					msg.error = error.message;
 					if (!vThis.props.multiUser)
 						msg.dsImage = {config:null,funcs:null,data:null,styleMap:null};
 				})
@@ -483,15 +484,16 @@ function processMsg(msg,vThis)
 			vThis.sendResponse(msg);
 			return;
 		default:
-		/*
 		//------------------------------------------------------------------
 		// Freehand (unsupervised) API call (undocumented)
 		//------------------------------------------------------------------
 			if (cmd && typeof vThis.tbl[cmd] === "function")
 				tabulatorFreehandAPI(cmd,args,msg,vThis);
-		*/
-			msg.error = "Missing or invalid command";
-			vThis.sendResponse(msg);
+			else
+			{
+				msg.error = "Missing or invalid command";
+				vThis.sendResponse(msg);
+			}
 			return;
 	}
 }
@@ -504,7 +506,10 @@ function tabulatorAsyncAPI(cmd,args,msg,vThis)
 
 	vThis.tbl[cmd](...args)
 		.then((resolveVal)=>{ debugLog("resolve value for async API=",resolveVal)})
-		.catch((err)=>{msg.error = err})
+		.catch((err)=>{
+			console.error("Async API error",err);
+			msg.error = err.message
+		})
 		.finally(()=>{
 			adjustStyleMap(msg,vThis);
 			if (!vThis.props.multiUser)
@@ -525,10 +530,11 @@ function tabulatorSyncAPI(cmd,args,msg,vThis)
 		msg.error = err.message;
 	}
 }
-/*
+
 function tabulatorFreehandAPI(cmd,args,msg,vThis)
 {
 	debugLog("Calling '"+cmd+"', API mode=Freehand");
+	const notSendable = "API response cannot be serialized to a msg";
 
 	// Execute the command in a way which supports both sync and async
 	let response = null;
@@ -537,32 +543,29 @@ function tabulatorFreehandAPI(cmd,args,msg,vThis)
 		//	const isPromise = !!response && typeof response === 'object' && typeof response.then === 'function'; 
 		if (response instanceof Promise)
 		{
-			response.then((resolveVal)=>{ debugLog("resolve value for freehand API=",resolveVal)})
-			.catch((err)=>{msg.error = err})
-			.finally(()=>{
-				adjustStyleMap(msg,vThis);
-				if (!vThis.props.multiUser)
-					msg.dsImage = {data:vThis.tbl.getData(),styleMap:vThis.tblStyleMap};
-				vThis.sendResponse(msg); // update Datastore even upon error, as cmd may have been applied partially
-			}
+			response.then((resolveVal)=>{
+				console.log("Freehand async API executed, resolve value=",resolveVal);
+				msg.payload = isSendable(resolveVal) ? resolveVal : notSendable;					
+			})
+			.catch((err)=>{
+				console.error("Freehand async API failure, error=",err);
+				msg.error = err.message;
+			})
+			.finally(()=>{	vThis.sendResponse(msg) })
 		}	
-			updateAndRespond(msg,vThis)});  // update Datastore even upon error, as cmd may have been applied partially
-		}
 		else  // handle sync result
 		{
+			console.log("Freehand sync API executed, response=",response);
 			if (response !== undefined && response !== null)
-			{
-				// Validate that the returned data is sendable in a msg
-				if (isSendable(response))
-					msg.payload = response;
-				else
-					msg.error = "API response cannot be serialized to a msg";
-			}
+				msg.payload = isSendable(response) ? response : notSendable;					
+			else
+				msg.payload = response;
 			vThis.sendResponse(msg);
 		}
 	}
 	catch (err) {  // handle sync error
-		msg.error = err;
+		console.error("Freehand sync API failure, error=",err);
+		msg.error = err.message;
 		vThis.sendResponse(msg);
 	}
 }
@@ -577,7 +580,7 @@ function isSendable(obj)
 		return false;
 	}
 }
-*/
+
 // ********************************************************************************************************************
 function adjustStyleMap(msg,vThis)
 {
@@ -1095,8 +1098,8 @@ function setGroupBy(msg,vThis)
 // ********************************************************************************************************************
 function cellEditSync(msg,vThis)
 {
-	debugLog("processing sync message from cell-edit in another client");
-
+/*  
+	// old implementation - does not support nested data
 	let data = {};
 	data[msg.payload.idField] = msg.payload.rowId;
 	data[msg.payload.field]   = msg.payload.value;
@@ -1106,6 +1109,15 @@ function cellEditSync(msg,vThis)
 		.catch((err)=>{
 			console.error("Table "+vThis.tblName+": Cell-edit sync failed:",err.message)
 		});
+*/
+	debugLog("processing sync message from cell-edit in another client");
+
+	const rowComponent = vThis.tbl.getRow(msg.payload.rowId);
+	const cellComponent = rowComponent.getCell(msg.payload.field);
+
+	vThis.silentCellUpdate = true; // suppress "cellEdit" notification. will be reset back in the event callback
+	cellComponent.setValue(msg.payload.value);
+
 	// Not sending a response msg to the flow, since this is an internal sync message
 }
 // ********************************************************************************************************************
@@ -1199,6 +1211,10 @@ function setEventNotifications(vThis)
 		//-------------------------------------------------------
 			case "cellEdited":
 				vThis.tbl.on(ev, function(cell)	{  // cell = cell component
+					if (vThis.silentCellUpdate)  {		// flag was set to true prior to a programmatic cell update (cellComponent.setValue() )
+						vThis.silentCellUpdate = false; // reset to normal
+						return;
+					}
 					const eventMsg = new tbEventMsg(ev);
 					
 					const row = cell.getRow();
@@ -1251,7 +1267,7 @@ function setEventNotifications(vThis)
 				break;
 			default:
 				console.error("Event '"+ev+"' is not defined or unsupported");
-				continue;
+				break;
 		}
 		debugLog("Table "+vThis.tblName+": Set '"+ev+"' notifications");
 	}

@@ -113,7 +113,14 @@ module.exports = function (RED) {
 								tblImage.timestamp = Date.now();
 								const row = tblImage.data.find(element => element[msg.payload.idField] == msg.payload.rowId)
 								if (row)
-									row[msg.payload.field] = msg.payload.value;
+								{
+									// Take in account that the field can be a dot-notated object property
+									const path = msg.payload.field.split('.');
+									//path.slice(0, -1).reduce((acc, key) => acc[key], row)[path[path.length - 1]] = msg.payload.value;
+									const cellName = path.pop();
+									const objRef = path.reduce((acc, key) => acc[key], row);
+									objRef[cellName] = msg.payload.value;
+								}
 								else
 								{
 									console.error("Datastore cellEditSync error - row "+msg.payload.rowId+" not found")

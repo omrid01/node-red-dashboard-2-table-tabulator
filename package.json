@@ -1,6 +1,6 @@
 {
     "name": "@omrid01/node-red-dashboard-2-table-tabulator",
-    "version": "0.8.1",
+    "version": "0.8.2",
     "description": "Table node, using Tabulator-tables package, for Node-RED Dashboard 2.0",
     "keywords": [
         "node-red",
